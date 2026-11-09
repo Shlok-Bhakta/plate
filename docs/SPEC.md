@@ -159,6 +159,52 @@ Agent edits get `source: "agent"`. They sync to the phone the same way app edits
 
 The CLI documents itself, and its help is the agents' documentation: `food`, `food -h`, `food --help` and `food help` print an overview; `-h` or `--help` anywhere in a command's arguments, or `food help <command>`, print that command's usage, flags, examples and gotchas (the meal-photo workflow is in `food log --help`, also `food help photo`); `food help nutrients` lists the keys and units. Help never needs the service. The texts live in `server/src/help.rs`; keep them in step with behavior.
 
+## AI logging (photo or text to a draft meal)
+
+Snap a photo, or type "2 enchiladas and rice", and an LLM proposes a meal you confirm in one tap. The agent loop runs on **the server**, because that's where search, the catalog and logging live. The API key is entered in the app (or the CLI) and stored only in the server's database, which is encrypted. It's never returned to the app, never logged, and never stored on the phone. Design background: `docs/research/in-app-agent.md`. That doc assumed Anthropic's API; this build targets the **OpenAI-compatible Chat Completions API** (tools plus image input), so it works with OpenRouter (the default), OpenAI, local servers and anything else compatible.
+
+### Config (stored in `meta`; key write-only)
+
+- `GET /v1/agent/config` returns `{"base_url": "https://openrouter.ai/api/v1", "model": "", "has_key": false, "key_hint": "…1234", "auto_log": false, "max_jobs_per_day": 60, "usage": {"today": {"jobs", "prompt_tokens", "completion_tokens", "cost"}, "month": {…}}}`. `cost` is in USD when the provider reports it (OpenRouter does, with `usage: {include: true}`), otherwise null.
+- `PUT /v1/agent/config` takes any of `{"base_url", "model", "api_key", "auto_log", "max_jobs_per_day"}`. An `api_key` of `""` clears it. It returns the same shape as GET.
+- `GET /v1/agent/models?q=` proxies the provider's `GET {base_url}/models`. For OpenRouter it filters to models whose `architecture.input_modalities` contains `image` and whose `supported_parameters` contains `tools`, and returns `{"models": [{"id", "name", "context_length", "prompt_price", "completion_price"}]}`, with prices per 1M tokens in USD (or null), sorted by name and filtered by `q`. For other providers it returns the ids unfiltered. It's cached for 1 hour.
+- `POST /v1/agent/test` sends a tiny text completion with the current config and returns `{"ok": true, "model", "latency_ms"}` or an error: `401` becomes "API key is invalid", `402` "out of credit", `404` "unknown model".
+
+### Jobs (async; the app long-polls)
+
+```
+POST   /v1/agent/jobs          {"image"?: "<base64 JPEG>", "text"?: "…", "barcodes"?: ["…"], "meal"?: "dinner", "date"?: "YYYY-MM-DD"}
+                               -> 202 {"job": "uuid"}   (at least one of image or text is required; the image is at most 1.5 MB decoded)
+GET    /v1/agent/jobs/ID?wait=25
+                               -> {"status": "running|draft|logged|failed", "step": "Searching: rice white cooked",
+                                   "draft": {"items": [batch items as for `food log --json`], "preview": [entries exactly as they would be logged],
+                                             "summary": "Dinner: … about 640 kcal, 48 g protein"},
+                                   "error"?: "…", "usage": {"prompt_tokens", "completion_tokens", "cost"}}
+POST   /v1/agent/jobs/ID/confirm   {"items"?: [edited batch items]} -> {"entries": [...], "version": N}   (logs through the same path as `food log --json`)
+DELETE /v1/agent/jobs/ID
+```
+
+- Jobs live in memory and expire after 1 hour. Images are never written to disk.
+- At most 2 jobs run at once, with a daily cap of `max_jobs_per_day`.
+- At most 6 model turns per job, a 90 s request timeout and a 3-minute job timeout.
+- 429, 5xx and connection errors are retried twice with backoff.
+- With `auto_log` on, a successful draft is confirmed automatically (status `logged`), and the app shows its usual undo toast.
+
+### The agent
+
+- **Request:** `POST {base_url}/chat/completions` with `model`, `messages`, `tools` (`type: "function"`) and `tool_choice: "auto"`. The user message's content parts are the text plus `{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,…"}}`. Headers: `Authorization: Bearer <key>`; for OpenRouter, also `HTTP-Referer` and `X-Title: Plate`. Include `"usage": {"include": true}`, which other providers ignore.
+- **System prompt:** built from the CLI's own help text (`food log --help` workflow, nutrient keys, search and barcode notes), with a short framing that maps CLI commands to tools. Everything that changes per request goes in the user turn: date and time, the default meal, what's left today, and the note.
+- **Tools** (all read-only or dry-run; writes only happen on confirm):
+  - `search_foods {query, limit?}`: own foods, the catalog, then OFF, as compact lines.
+  - `lookup_barcode {code}`
+  - `suggest {meal?}`
+  - `propose_meal {items: [...], summary}`: a **dry run** of the batch log, in a transaction that is rolled back. It returns the matched names, sizes, nutrients and per-item errors, so the model can check its matches and propose again. The last successful proposal is the draft.
+- **Prompt injection** (text on labels and menus): the tools can't write, delete, run SQL or read health data, and the user confirms the draft unless they turned on auto-log.
+
+### CLI
+
+`food agent config [--base-url U] [--model M] [--key-stdin] [--auto-log on|off] [--max-jobs N]`, `food agent models [query]`, `food agent test`, `food agent log [--photo PATH] [--text T] [--meal M] [--date D] [--yes]`. Without `--yes` it prints the draft and asks for confirmation; with it, it logs the draft. Each of these has full `--help`.
+
 ## Quality bar
 
 - The Rust code stays small and plain: small modules, no frameworks beyond `tiny_http`, `rusqlite` (`bundled-sqlcipher-vendored-openssl`), `serde_json`, a small HTTP client (`ureq`) and `libc`. Add tests for sync, last-writer-wins, recipe math, serving scaling and goal math (`cargo test`).
