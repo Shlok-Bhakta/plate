@@ -1,8 +1,11 @@
 // Logic tests for the pure Core sources (compiled with Sources/Core/*.swift as main.swift by ios-test.sh):
 // serving scaling, nutrient sums, last-writer-wins merging of sync payloads, outbox persistence,
 // lenient decoding, day keys and the server's time zone, display units, server setup links, the Apple Health
-// daily totals and the demo fixture.
+// daily totals, the demo fixture, and AI logging (config, model, job and draft decoding from Tests/Fixtures,
+// draft editing math, error copy, and photo resizing with EXIF and GPS stripped).
+import CoreGraphics
 import Foundation
+import ImageIO
 
 var failures = 0
 var checks = 0
@@ -768,6 +771,213 @@ let days = Set(demo.liveEntries.map(\.day))
 check(days.count >= 70 && days.count <= 90 && days.contains("2026-11-08") && !days.contains("2026-10-30"), "90 days with gaps")
 check(DaySummary(day: "2026-11-07", entries: Array(demo.entries.values)).entries(.dinner).isEmpty == false, "yesterday has a dinner")
 check(demo.goals?.basis?.tdee != nil && demo.healthDays.count == 120 && demo.foods.values.contains { $0.kind == .recipe }, "goals, health days, recipes")
+
+// MARK: AI logging: config, models, jobs and drafts from SPEC-shaped fixtures
+
+func fixture(_ name: String) -> Data {
+    (try? Data(contentsOf: URL(fileURLWithPath: "Tests/Fixtures/\(name).json"))) ?? Data()
+}
+let agentConfig = try? JSONDecoder().decode(AgentConfig.self, from: fixture("agent-config"))
+check(agentConfig?.model == "google/gemini-2.5-flash" && agentConfig?.hasKey == true && agentConfig?.isConfigured == true,
+      "config: model and key")
+check(agentConfig?.keyDots == "••1234" && agentConfig?.provider == .openRouter && agentConfig?.maxJobsPerDay == 60,
+      "config: key hint shows as ••1234, OpenRouter preset")
+check(agentConfig?.today.jobs == 3 && near(agentConfig?.today.cost, 0.0124) && agentConfig?.month.cost == nil
+      && agentConfig?.month.tokens == 227_765, "config: usage today and month, unknown cost stays nil")
+check(agentConfig?.usesDefaultPrompt == true && agentConfig?.effectivePrompt == "You log meals for one person in Plate.",
+      "config: a null system_prompt uses the default")
+check(AgentFormat.usage(agentConfig!.today) == "3 logs · $0.012" && AgentFormat.usage(agentConfig!.month) == "41 logs · 227.8k tokens",
+      "usage lines: \(AgentFormat.usage(agentConfig!.today)) / \(AgentFormat.usage(agentConfig!.month))")
+let emptyConfig = try? JSONDecoder().decode(AgentConfig.self, from: fixture("agent-config-empty"))
+check(emptyConfig?.isConfigured == false && emptyConfig?.provider == .custom && emptyConfig?.keyHint == nil && emptyConfig?.autoLog == true,
+      "config: no key, a custom provider")
+check(emptyConfig?.usesDefaultPrompt == false && emptyConfig?.effectivePrompt == "Only log what is on the plate.", "config: custom instructions")
+let sparseConfig = try? JSONDecoder().decode(AgentConfig.self, from: Data(#"{"has_key": true}"#.utf8))
+check(sparseConfig?.baseURL == AgentProvider.openRouterURL && sparseConfig?.isConfigured == false, "config: a sparse reply defaults to OpenRouter, no model")
+if let c = agentConfig, let data = try? JSONEncoder().encode(c), let back = try? JSONDecoder().decode(AgentConfig.self, from: data) {
+    check(back == c, "config round-trips through the cache")
+} else { check(false, "config encodes") }
+
+func changeJSON(_ c: AgentConfigChange) -> [String: JSONValue] {
+    (try? JSONDecoder().decode([String: JSONValue].self, from: c.body())) ?? [:]
+}
+check(changeJSON(AgentConfigChange(apiKey: "sk-or-abc")) == ["api_key": .string("sk-or-abc")], "PUT sends only the key")
+check(changeJSON(AgentConfigChange(apiKey: "")) == ["api_key": .string("")], "an empty key clears it")
+check(changeJSON(AgentConfigChange(model: "m", autoLog: true)) == ["model": .string("m"), "auto_log": .bool(true)], "model and auto-log")
+check(changeJSON(AgentConfigChange(systemPrompt: .some(nil))) == ["system_prompt": .null]
+      && changeJSON(AgentConfigChange(systemPrompt: .some(""))) == ["system_prompt": .null]
+      && changeJSON(AgentConfigChange(systemPrompt: .some("Be brief"))) == ["system_prompt": .string("Be brief")]
+      && changeJSON(AgentConfigChange()).isEmpty, "system_prompt: text sets, nil or empty resets, absent leaves it")
+check(AgentProvider(baseURL: "https://openrouter.ai/api/v1/") == .openRouter && AgentProvider(baseURL: "https://api.openai.com/v1") == .custom,
+      "provider from the base URL")
+
+let modelList = try? JSONDecoder().decode(AgentModelList.self, from: fixture("agent-models"))
+check(modelList?.models.map(\.id) == ["google/gemini-2.5-flash", "local/llava", "qwen2.5-vl:7b"], "models: objects and bare ids")
+check(modelList?.models[0].priceLine == "$0.30 in · $2.50 out" && modelList?.models[1].priceLine == nil
+      && modelList?.models[2].name == "qwen2.5-vl:7b", "model prices per 1M tokens: \(modelList?.models[0].priceLine ?? "nil")")
+check(AgentFormat.price(15) == "$15" && AgentFormat.price(0.075) == "$0.075" && AgentFormat.price(0) == "free", "price formatting")
+
+let running = try? JSONDecoder().decode(AgentJob.self, from: fixture("agent-job-running"))
+check(running?.status == .running && running?.step == "Searching: rice white cooked" && running?.draft == nil, "job: running with a step")
+let failedJob = try? JSONDecoder().decode(AgentJob.self, from: fixture("agent-job-failed"))
+check(failedJob?.status == .failed && AgentFailure.classify(message: failedJob?.error).kind == .invalidKey, "job: failed, invalid key")
+let draftJob = try? JSONDecoder().decode(AgentJob.self, from: fixture("agent-job-draft"))
+let draft = draftJob?.draft
+check(draftJob?.status == .draft && draft?.items.count == 3 && draft?.preview.count == 3 && draft?.isEditable == true,
+      "job: a draft with items and preview entries")
+check(draft?.preview[0].name == "Rice, white, cooked" && draft?.preview[0].meal == .dinner && draft?.preview[1].foodID != nil
+      && near(draftJob?.usage?.cost, 0.0061), "draft: preview entries decode as Entry")
+check(near(draft?.kcal, 988) && near(draft?.totals["protein"], 43.9) && draft?.totals["carbs"] == 51, "draft totals: unknown stays unknown")
+check(draft?.summary.hasPrefix("Dinner:") == true, "draft summary")
+let confirmed = try? JSONDecoder().decode(AgentConfirmed.self, from: fixture("agent-confirm"))
+check(confirmed?.entries.first?.id == "e1" && confirmed?.version == 912 && confirmed?.entries.first?.version == 912, "confirm reply")
+let loggedJob = try? JSONDecoder().decode(AgentJob.self, from: Data(#"{"status":"logged","logged":[{"entry":{"id":"x","day":"2026-11-09","meal":"lunch","name":"Soup","nutrients":{"kcal":200}}}]}"#.utf8))
+check(loggedJob?.status == .logged && loggedJob?.entries.map(\.id) == ["x"], "an auto-logged job's entries, when the reply has them")
+let builtJob = try? JSONDecoder().decode(AgentJob.self, from: Data(#"{"job":"j","status":"logged","meal":"dinner","date":"2026-11-09","created_at":1762740000000,"draft":null,"entries":[{"id":"z","day":"2026-11-09","meal":"dinner","name":"Rice","nutrients":{"kcal":200}}],"version":77}"#.utf8))
+check(builtJob?.meal == .dinner && builtJob?.date == "2026-11-09" && builtJob?.createdAt == 1762740000000 && builtJob?.version == 77
+      && builtJob?.entries.map(\.id) == ["z"] && builtJob?.draft == nil, "the server's job reply: defaults, entries and version once logged")
+let confirmToday = try? JSONDecoder().decode(AgentConfirmed.self, from: Data(#"{"entries":[{"id":"a","day":"2026-11-09","meal":"lunch","name":"Soup"}],"version":5,"today":{"kcal":900}}"#.utf8))
+check(confirmToday?.entries.count == 1 && confirmToday?.version == 5, "confirm with today")
+check((try? JSONDecoder().decode(AgentJobCreated.self, from: Data(#"{"job":"abc"}"#.utf8)))?.job == "abc", "202 job id")
+
+// Job body: base64 image, trimmed text, barcodes, meal and date.
+let jobBody = (try? AgentJobInput(image: Data([1, 2, 3]), text: "  half the rice \n", barcodes: ["0049000028911"], meal: .lunch, day: "2026-11-09").body())
+    .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+check(jobBody["image"] == .string("AQID") && jobBody["text"] == .string("half the rice") && jobBody["meal"] == .string("lunch")
+      && jobBody["date"] == .string("2026-11-09") && jobBody["barcodes"] == .array([.string("0049000028911")]), "job body")
+let textOnly = (try? AgentJobInput(text: "2 eggs", meal: .breakfast, day: "2026-11-09").body())
+    .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+check(textOnly["image"] == nil && textOnly["barcodes"] == nil && AgentJobInput(text: "  ", meal: .snack, day: "d").isEmpty, "text-only body")
+
+// MARK: AI logging: draft editing math (mirrors the server's rescale_entry)
+
+if let d = draft {
+    let grams = d.settingGrams(90, at: 0)
+    check(near(grams?.preview[0].grams, 90) && near(grams?.preview[0].kcal, 117) && near(grams?.preview[0].servings, 0.569, 0.001),
+          "grams scale the entry: \(String(describing: grams?.preview[0].servings))")
+    check(grams?.items[0].object?["grams"] == .number(90) && grams?.items[0].object?["catalog"] == .string("rice white cooked"),
+          "a catalog item keeps its query and gets the new grams")
+    let servings = d.settingServings(3, at: 1)
+    check(servings?.items[1].object?["servings"] == .number(3) && near(servings?.preview[1].kcal, 171) && near(servings?.preview[1].grams, 78),
+          "servings scale a food item and its entry")
+    let named = d.settingServings(1, at: 2)
+    check(named?.items[2].object?["servings"] == .number(1) && named?.items[2].object?["grams"] == .number(170)
+          && near(named?.preview[2].kcal, 320) && named?.items[2].object?["nutrients"] == d.items[2].object?["nutrients"],
+          "a named item scales servings and its total grams; per-serving nutrients stay")
+    check(near(d.settingGrams(90, at: 0)?.kcal, 871), "the total follows an edit")
+    check(d.settingGrams(0, at: 0) == nil && d.settingServings(-1, at: 0) == nil && d.settingServings(1, at: 9) == nil,
+          "bad amounts and indexes are refused")
+    let removed = d.removing(1)
+    check(removed.items.count == 2 && removed.preview.map(\.id) == ["p1", "p3"] && near(removed.kcal, 874), "remove an item")
+    check(d.removing(0).removing(0).removing(0).isEmpty, "removing everything empties the draft")
+    let moved = d.moving(to: .lunch)
+    check(moved.preview.allSatisfy { $0.meal == .lunch } && moved.items.allSatisfy { $0.object?["meal"] == .string("lunch") }, "move to another meal")
+    check(d.settingServings(1.137, at: 0) == d, "the same amount is no edit")
+    var extra = d
+    extra.items[0] = .object((d.items[0].object ?? [:]).merging(["matched": .string("x"), "id": .string("y")]) { a, _ in a })
+    check(extra.confirmItems[0].object?.keys.sorted() == ["catalog", "grams", "meal"] && extra.confirmItems.count == 3,
+          "confirm sends only documented item fields")
+    let neither = AgentDraft.scale(item: .object(["food": .string("f")]), by: 2, entry: Entry(day: "d", meal: .lunch, name: "x", servings: 1.5, nutrients: [:]))
+    check(neither.object?["servings"] == .number(3), "an item with no amount gets servings from its entry")
+}
+let demoDraft = DemoAgent.draft(text: nil, hasPhoto: true, meal: .dinner, day: "2026-11-08")
+check(demoDraft.preview.map(\.name) == ["Atlantic salmon, baked", "Jasmine rice, cooked", "Avocado"] && demoDraft.isEditable
+      && demoDraft.preview.allSatisfy { $0.source == "agent" && $0.day == "2026-11-08" }, "demo photo draft: \(demoDraft.summary)")
+let demoText = DemoAgent.draft(text: "2 eggs and toast with avocado", hasPhoto: false, meal: .breakfast, day: "2026-11-08")
+check(demoText.preview.map(\.name) == ["Egg, whole, scrambled", "Sourdough toast", "Avocado"] && demoText.preview[0].servings == 2,
+      "demo text draft: \(demoText.preview.map(\.name))")
+
+// MARK: AI logging: friendly errors
+
+let errorCases: [(Int, String, AgentFailure.Kind)] = [
+    (0, "API key is invalid", .invalidKey), (401, "", .invalidKey), (400, "no API key is set", .noKey),
+    (402, "out of credit", .outOfCredit), (0, "Insufficient credits", .outOfCredit), (404, "unknown model foo/bar", .unknownModel),
+    (0, "the job timed out after 3 minutes", .timeout), (429, "daily limit of 60 AI logs reached", .dailyLimit),
+    (429, "slow down", .busy), (500, "the model didn't propose a meal", .server), (502, "upstream error", .server),
+    // The server's own words (server/src/agent.rs and llm.rs).
+    (400, "AI logging needs an API key first: add one in Settings (or `food agent config --key-stdin`)", .noKey),
+    (400, "AI logging needs a model first: pick one in Settings (or `food agent config --model ID`)", .noModel),
+    (502, "API key is invalid", .invalidKey), (502, "out of credit: add credit with your provider (or pick a cheaper model)", .outOfCredit),
+    (502, "unknown model \"x/y\": check the model id (`food agent models`)", .unknownModel),
+    (502, "\"x/y\" can't do this (no endpoints found); pick a model with image input and tool calling", .unknownModel),
+    (0, "timed out waiting for the model", .timeout), (429, "2 AI jobs are already running; try again in a moment", .busy),
+    (429, "the daily limit of 60 AI jobs is reached; it resets at midnight (raise it in Settings)", .dailyLimit),
+    (502, "rate limited by the provider; try again in a minute (slow down)", .busy), (0, "the model declined: no", .server),
+]
+for (status, message, kind) in errorCases {
+    check(AgentFailure.classify(status: status, message: message).kind == kind, "error \(status) ‘\(message)’ → \(kind)")
+}
+for kind in [AgentFailure.Kind.noKey, .noModel, .invalidKey, .outOfCredit, .unknownModel, .timeout, .dailyLimit, .busy, .server] {
+    check(AgentFailure.classify(message: DemoAgent.errorMessage(kind)).kind == kind, "demo error text for \(kind) classifies back")
+}
+check(AgentFailure(.offline).canRetry && AgentFailure(.timeout).canRetry && !AgentFailure(.invalidKey).canRetry
+      && AgentFailure(.unknownModel).needsSettings && !AgentFailure(.outOfCredit).needsSettings, "retry and settings hints")
+
+// MARK: AI logging: photos (resize, upright, no EXIF or GPS)
+
+check(AgentImage.fittedSize(width: 4032, height: 3024) == (1024, 768) && AgentImage.fittedSize(width: 3000, height: 4000) == (768, 1024),
+      "long edge to 1024")
+check(AgentImage.fittedSize(width: 800, height: 600) == (800, 600) && AgentImage.fittedSize(width: 5000, height: 10) == (1024, 2)
+      && AgentImage.fittedSize(width: 0, height: 5) == (0, 0), "small images keep their size; never zero")
+
+/// A 3000 × 2000 photo, left half red and right half blue, tagged orientation 6 (rotate 90° to show), with
+/// EXIF, GPS and TIFF metadata like a phone camera writes.
+func cameraJPEG() -> Data? {
+    let w = 3000, h = 2000
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+    ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1); ctx.fill(CGRect(x: 0, y: 0, width: w / 2, height: h))
+    ctx.setFillColor(red: 0, green: 0, blue: 1, alpha: 1); ctx.fill(CGRect(x: w / 2, y: 0, width: w / 2, height: h))
+    guard let image = ctx.makeImage() else { return nil }
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+    let props: [CFString: Any] = [
+        kCGImagePropertyOrientation: 6,
+        kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: "2026:11:09 12:30:00", kCGImagePropertyExifLensModel: "iPhone back camera"],
+        kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 37.33, kCGImagePropertyGPSLatitudeRef: "N",
+                                        kCGImagePropertyGPSLongitude: 122.03, kCGImagePropertyGPSLongitudeRef: "W"],
+        kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: "Apple", kCGImagePropertyTIFFModel: "iPhone"],
+    ]
+    CGImageDestinationAddImage(dest, image, props as CFDictionary)
+    return CGImageDestinationFinalize(dest) ? out as Data : nil
+}
+
+/// The RGB of the pixel at (x, y), y from the top.
+func pixel(_ data: Data, x: Int, y: Int) -> (r: Int, g: Int, b: Int)? {
+    guard let src = CGImageSourceCreateWithData(data as CFData, nil), let img = CGImageSourceCreateImageAtIndex(src, 0, nil),
+          let ctx = CGContext(data: nil, width: img.width, height: img.height, bitsPerComponent: 8, bytesPerRow: img.width * 4,
+                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+    guard let base = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+    let i = (y * img.width + x) * 4
+    return (Int(base[i]), Int(base[i + 1]), Int(base[i + 2]))
+}
+
+if let original = cameraJPEG() {
+    check(AgentImage.metadataKeys(original).isSuperset(of: ["{GPS}", "{Exif}", "{TIFF}"]), "the fixture photo carries GPS, EXIF and TIFF")
+    let prepared = AgentImage.prepare(original)
+    check(prepared != nil, "prepare reads a camera JPEG")
+    if let prepared {
+        let size = AgentImage.pixelSize(prepared)
+        check(size?.width == 683 && size?.height == 1024, "upright portrait, 1024 long edge: \(String(describing: size))")
+        let keys = AgentImage.metadataKeys(prepared)
+        check(!keys.contains("{GPS}") && !keys.contains("{TIFF}") && !keys.contains("{ExifAux}"), "no GPS or TIFF metadata: \(keys.sorted())")
+        let exif = (CGImageSourceCreateWithData(prepared as CFData, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) } as? [String: Any])?["{Exif}"] as? [String: Any]
+        check(exif?[kCGImagePropertyExifDateTimeOriginal as String] == nil && exif?[kCGImagePropertyExifLensModel as String] == nil,
+              "no camera EXIF survives: \(String(describing: exif))")
+        let orientation = (CGImageSourceCreateWithData(prepared as CFData, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) } as? [String: Any])?[kCGImagePropertyOrientation as String] as? Int
+        check(orientation == nil || orientation == 1, "no orientation tag left to apply")
+        // Orientation 6 turns the left (red) half to the top.
+        let top = pixel(prepared, x: 340, y: 100), bottom = pixel(prepared, x: 340, y: 920)
+        check((top?.r ?? 0) > 200 && (top?.b ?? 255) < 60 && (bottom?.b ?? 0) > 200 && (bottom?.r ?? 255) < 60,
+              "pixels are rotated upright: top \(String(describing: top)), bottom \(String(describing: bottom))")
+        check(prepared.count < original.count && prepared.count < AgentImage.maxBytes, "smaller, and under the server's 1.5 MB")
+        check(AgentImage.prepare(prepared).flatMap(AgentImage.pixelSize)?.height == 1024, "preparing twice keeps the size")
+    }
+} else { check(false, "make the fixture photo") }
+check(AgentImage.prepare(Data("not an image".utf8)) == nil, "not an image")
+check(AgentImage.barcodeDigits(["0049000028911", " 5000112637922 ", "https://x.y", "12345", "0049000028911", "ABC123456", "123456789012345"])
+      == ["0049000028911", "5000112637922"], "barcode digits: 6 to 14 digits, deduped")
 
 print("\(checks - failures)/\(checks) checks passed")
 if failures > 0 { exit(1) }

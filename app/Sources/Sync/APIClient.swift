@@ -54,6 +54,8 @@ struct APIClient: Sendable {
     let base: URL
     let token: String
     let session: URLSession
+    /// AI logging: a job upload (up to 90 s) and its long-poll (`wait=25`) outlast the 40 s default.
+    let longSession: URLSession
 
     init?(baseURL: String, token: String) {
         guard let url = URL(string: baseURL), url.scheme != nil else { return nil }
@@ -65,6 +67,13 @@ struct APIClient: Sendable {
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.httpMaximumConnectionsPerHost = 4
         session = URLSession(configuration: config)
+        let long = URLSessionConfiguration.default
+        long.waitsForConnectivity = false
+        long.timeoutIntervalForRequest = 95
+        long.timeoutIntervalForResource = 180
+        long.requestCachePolicy = .reloadIgnoringLocalCacheData
+        long.httpMaximumConnectionsPerHost = 2
+        longSession = URLSession(configuration: long)
     }
 
     var hostLabel: String { base.host.map { h in base.port.map { "\(h):\($0)" } ?? h } ?? base.absoluteString }
@@ -84,19 +93,31 @@ struct APIClient: Sendable {
         return r
     }
 
-    private func send<T: Decodable>(_ r: URLRequest, as: T.Type) async throws -> T {
+    /// The body and status of a request; transport failures become `APIError.offline`.
+    private func perform(_ r: URLRequest, on session: URLSession? = nil) async throws -> (Data, Int) {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: r)
+            (data, response) = try await (session ?? self.session).data(for: r)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
+        } catch let error as URLError where error.code == .timedOut {
+            throw APIError.offline("timed out")
         } catch {
             throw APIError.offline(error.localizedDescription)
         }
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+
+    private static func errorMessage(_ data: Data) -> String {
+        (try? JSONDecoder().decode([String: JSONValue].self, from: data))?["error"]?.string
+            ?? String(decoding: data.prefix(200), as: UTF8.self)
+    }
+
+    private func send<T: Decodable>(_ r: URLRequest, as: T.Type) async throws -> T {
+        let (data, code) = try await perform(r)
         switch code {
         case 200..<300:
             do { return try JSONDecoder().decode(T.self, from: data) }
@@ -104,10 +125,76 @@ struct APIClient: Sendable {
         case 401, 403: throw APIError.unauthorized
         case 404: throw APIError.notFound
         default:
-            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-                ?? String(decoding: data.prefix(200), as: UTF8.self)
-            throw APIError.http(code, message)
+            throw APIError.http(code, Self.errorMessage(data))
         }
+    }
+
+    // MARK: AI logging (SPEC "AI logging"): every failure is an AgentFailure with friendly copy.
+
+    /// Sends an agent request. A 401 or 403 that names the provider's key is the key's problem; otherwise
+    /// it's this phone's token (`APIError.unauthorized`, as everywhere else).
+    private func sendAgent<T: Decodable>(_ r: URLRequest, as: T.Type, long: Bool = false) async throws -> T {
+        let data: Data, code: Int
+        do {
+            (data, code) = try await perform(r, on: long ? longSession : session)
+        } catch APIError.offline(let message) {
+            throw message == "timed out" ? AgentFailure(.timeout, detail: nil) : AgentFailure(.offline, detail: message)
+        }
+        if (200..<300).contains(code) {
+            do { return try JSONDecoder().decode(T.self, from: data) }
+            catch { throw AgentFailure(.server, detail: "Unexpected response from the server") }
+        }
+        let message = Self.errorMessage(data)
+        if code == 401 || code == 403 {
+            let m = message.lowercased()
+            if !(m.contains("key") || m.contains("provider") || m.contains("credit")) { throw APIError.unauthorized }
+        }
+        if code == 404 && message.lowercased().contains("job") { throw AgentFailure(.server, detail: message) }
+        throw AgentFailure.classify(status: code, message: message)
+    }
+
+    func agentConfig() async throws -> AgentConfig {
+        try await sendAgent(request("v1/agent/config", timeout: 15), as: AgentConfig.self)
+    }
+
+    /// The key, if any, is only in this request's body.
+    func updateAgentConfig(_ change: AgentConfigChange) async throws -> AgentConfig {
+        try await sendAgent(request("v1/agent/config", method: "PUT", body: try change.body(), timeout: 20), as: AgentConfig.self)
+    }
+
+    func agentModels(query: String) async throws -> [AgentModel] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return try await sendAgent(request("v1/agent/models", query: q.isEmpty ? [] : [URLQueryItem(name: "q", value: q)],
+                                           timeout: 30), as: AgentModelList.self).models
+    }
+
+    func agentTest() async throws -> AgentTestResult {
+        try await sendAgent(request("v1/agent/test", method: "POST", body: Data("{}".utf8), timeout: 60), as: AgentTestResult.self, long: true)
+    }
+
+    /// 202 with the job's id. The photo upload gets 90 s.
+    func createAgentJob(_ input: AgentJobInput) async throws -> String {
+        try await sendAgent(request("v1/agent/jobs", method: "POST", body: try input.body(), timeout: 90),
+                            as: AgentJobCreated.self, long: true).job
+    }
+
+    /// Long-polls up to `wait` seconds for the job to move on.
+    func agentJob(_ id: String, wait: Int = 25) async throws -> AgentJob {
+        try await sendAgent(request("v1/agent/jobs/\(id)", query: [URLQueryItem(name: "wait", value: String(wait))],
+                                    timeout: TimeInterval(wait) + 20), as: AgentJob.self, long: true)
+    }
+
+    /// Logs the draft, or `items` when the person edited it.
+    func confirmAgentJob(_ id: String, items: [JSONValue]?) async throws -> AgentConfirmed {
+        var body: [String: JSONValue] = [:]
+        if let items { body["items"] = .array(items) }
+        return try await sendAgent(request("v1/agent/jobs/\(id)/confirm", method: "POST",
+                                           body: try JSONEncoder().encode(JSONValue.object(body)), timeout: 30),
+                                   as: AgentConfirmed.self, long: true)
+    }
+
+    func cancelAgentJob(_ id: String) async {
+        _ = try? await perform(request("v1/agent/jobs/\(id)", method: "DELETE", timeout: 10))
     }
 
     struct Ping: Decodable { var ok: Bool; var version: Int? }

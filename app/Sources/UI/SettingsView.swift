@@ -15,11 +15,19 @@ struct SettingsView: View {
     @State private var showSplit = false
     @State private var showLimits = false
     @State private var showHealthActivity = false
+    @State private var showAgent = false
 
     var body: some View {
         ScrollViewReader { proxy in
             Form {
                 ServerSection()
+                Section {
+                    Button { showAgent = true } label: { AgentSettingsRow() }
+                        .tint(.primary)
+                } footer: {
+                    Text("Log a meal from a photo or a few words. The AI runs on your server with your own key.")
+                }
+                .id("agent")
                 HealthSection(showActivity: $showHealthActivity).id("health")
                 AppIconSection().id("appicon")
                 UnitsSection().id("units")
@@ -39,6 +47,7 @@ struct SettingsView: View {
             .navigationDestination(isPresented: $showSplit) { MealSplitView() }
             .navigationDestination(isPresented: $showLimits) { LimitsView() }
             .navigationDestination(isPresented: $showHealthActivity) { HealthActivityView() }
+            .navigationDestination(isPresented: $showAgent) { AgentSettingsView() }
             .onChange(of: store.goals?.version) { _, v in GoalsRecalc.shared.observe(v) }
             .task {
                 // Debug: -PlateScreen goals | basis | appicon | units | reminders | about | health | micros | mealsplit | limits | healthlog
@@ -47,6 +56,7 @@ struct SettingsView: View {
                 case "mealsplit": showSplit = true
                 case "limits": showLimits = true
                 case "healthlog": showHealthActivity = true
+                case "agentsettings", "agentinstructions", "agentmodels": showAgent = true
                 case let target? where ["goals", "basis", "appicon", "units", "reminders", "about", "health"].contains(target):
                     try? await Task.sleep(for: .milliseconds(500))
                     proxy.scrollTo(target, anchor: ["health", "units", "appicon"].contains(target) ? .center : .top)

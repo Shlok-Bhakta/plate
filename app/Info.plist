@@ -28,6 +28,6 @@
     <key>CFBundleURLName</key><string>Plate setup link</string>
     <key>CFBundleURLSchemes</key><array><string>plate</string></array>
   </dict></array>
-  <key>NSCameraUsageDescription</key><string>Plate uses the camera to read barcodes on food packages, so you can log them in one tap, and to scan your server's setup code.</string>
+  <key>NSCameraUsageDescription</key><string>Plate uses the camera to read barcodes on food packages, to photograph meals so AI can draft them for you to log (photos go only to your own server and the AI provider you chose), and to scan your server's setup code.</string>
 </dict>
 </plist>

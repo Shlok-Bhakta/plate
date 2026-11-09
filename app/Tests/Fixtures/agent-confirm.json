@@ -1,0 +1,4 @@
+{"entries": [
+  {"id": "e1", "day": "2026-11-09", "meal": "dinner", "logged_at": 1762740100000, "food_id": "f-rice", "name": "Rice, white, cooked",
+   "servings": 1.137, "grams": 180, "nutrients": {"kcal": 234}, "source": "agent", "updated_at": 1762740100000, "deleted": false, "version": 912}
+], "version": 912}

@@ -35,6 +35,13 @@
 //                     -PlateSetIcon E1|D1|D2|D3|D4|E2|E3|E4 switches the home-screen icon a second after launch;
 //                     -PlateGoalEdit <key> opens a goal's inline editor;
 //                     -PlateHealth syncing|retry|none shows another Apple Health state in demo mode
+//   AI logging: -PlateScreen agentsettings | agentinstructions | agentmodels (Settings → AI logging) |
+//              capture (the camera; -PlateCaptureReview YES starts on the demo shot) | capturetext |
+//              agentprogress (-PlateAgentHold YES stays on it) | agentdraft | agenterror (with
+//              -PlateAgentError noKey|invalidKey|outOfCredit|unknownModel|timeout|offline|dailyLimit|busy|server) |
+//              agenttext (a text job for -PlateQuery) | agentsetup (the not-set-up sheet);
+//              -PlateAgent unconfigured, -PlateAgentAutoLog YES, -PlateDemoPhoto <file in Documents>,
+//              -PlateInstructionsCollapsed YES
 //   Reminders: -PlateScreen reminders (Settings, scrolled to Reminders); -PlateReminders denied shows the
 //              "off in iOS Settings" state in demo mode; -PlateRemindersIntro YES shows the one-time intro in
 //              demo mode; -PlateTestReminder breakfast|lunch|dinner|summary delivers one in 4 s
@@ -187,6 +194,8 @@ enum DebugLaunch {
         case "scanner": router.openAdd(start: .scanner)
         case "entry":
             if let e = store.summary(for: router.day).entries(.breakfast).first { router.editing = EntryRef(id: e.id) }
+        case "agentsettings", "agentinstructions", "agentmodels":
+            router.todayPath = [.settings]
         case "settings", "goals", "basis", "appicon", "units", "reminders", "about", "health", "healthlog", "micros", "mealsplit", "limits":
             router.todayPath = [.settings]
         case "nutrients": router.todayPath = [.nutrients(day: router.day)]

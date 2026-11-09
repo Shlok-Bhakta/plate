@@ -1,0 +1,5 @@
+{"models": [
+  {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash", "context_length": 1048576, "prompt_price": 0.3, "completion_price": 2.5},
+  {"id": "local/llava", "name": "local/llava", "context_length": null, "prompt_price": null, "completion_price": null},
+  "qwen2.5-vl:7b"
+]}

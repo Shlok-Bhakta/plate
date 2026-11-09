@@ -1,0 +1,6 @@
+{"base_url": "https://openrouter.ai/api/v1", "model": "google/gemini-2.5-flash", "has_key": true, "key_hint": "…1234",
+ "auto_log": false, "max_jobs_per_day": 60,
+ "usage": {"today": {"jobs": 3, "prompt_tokens": 14210, "completion_tokens": 1884, "cost": 0.0124},
+           "month": {"jobs": 41, "prompt_tokens": 201455, "completion_tokens": 26310, "cost": null}},
+ "system_prompt": null,
+ "default_system_prompt": "You log meals for one person in Plate."}

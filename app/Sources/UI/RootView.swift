@@ -98,6 +98,7 @@ struct RootView: View {
                 }
                 .tabBarMinimizeBehavior(.onScrollDown)
                 .modifier(QuickLogAccessory(enabled: router.tab != .search))
+                .agentHost(debug: true)
                 .sheet(item: $router.setupLink) { link in
                     NavigationStack { ServerConnectView(mode: .change, link: link) }
                 }
@@ -176,6 +177,7 @@ struct QuickLogBar: View {
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.zoomNamespace) private var zoom
     @Environment(\.units) private var units
+    @Environment(\.agentLauncher) private var agent
     @State private var drops = 0
 
     private var expanded: Bool { placement != .inline }
@@ -218,6 +220,14 @@ struct QuickLogBar: View {
             .accessibilityLabel("\(title), \(subtitle)")
 
             if expanded {
+                Button { agent?(AgentCaptureRequest(meal: meal, day: router.day)) } label: {
+                    Image(systemName: "camera.fill").font(.system(size: 17, weight: .medium))
+                        .frame(width: 36, height: 36).contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Snap a meal")
+                .accessibilityHint("Logs a meal from a photo with AI")
+
                 Button { router.openAdd(meal: meal, day: router.day, start: .scanner) } label: {
                     Image(systemName: "barcode.viewfinder").font(.system(size: 19, weight: .medium))
                         .frame(width: 36, height: 36).contentShape(Circle())
@@ -264,6 +274,12 @@ struct QuickLogBar: View {
         }
         Button { router.openAdd(meal: meal, day: router.day, start: .scanner) } label: {
             Label("Scan barcode", systemImage: "barcode.viewfinder")
+        }
+        Button { agent?(AgentCaptureRequest(meal: meal, day: router.day)) } label: {
+            Label("Snap a meal", systemImage: "camera")
+        }
+        Button { agent?(AgentCaptureRequest(mode: .text(""), meal: meal, day: router.day)) } label: {
+            Label("Describe a meal", systemImage: "text.bubble")
         }
     }
 }

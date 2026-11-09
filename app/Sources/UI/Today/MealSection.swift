@@ -56,24 +56,8 @@ struct EntryRow: View {
 
     var body: some View {
         Button { router.editing = EntryRef(id: entry.id) } label: {
-            HStack(spacing: 0) {
-                ProvenanceGlyph(entry: entry)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.name).font(.body).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
-                    let detail = entry.detailLine(units)
-                    if !detail.isEmpty {
-                        Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 12)
-                Text(Fmt.kcal(entry.kcal))
-                    .numberFont(17, relativeTo: .body)
-                    .foregroundStyle(entry.kcal == nil ? .tertiary : .secondary)
-                    .contentTransition(.numericText(value: entry.kcal ?? 0))
-            }
-            .frame(minHeight: 60)
-            .contentShape(Rectangle())
-            .dayShifted()
+            EntryRowLabel(entry: entry)
+                .dayShifted()
         }
         .buttonStyle(.plain)
         .alignmentGuide(.listRowSeparatorLeading) { _ in 20 }
@@ -132,6 +116,42 @@ struct EntryRow: View {
         }
         Divider()
         Button(role: .destructive) { Actions.delete([entry]) } label: { Label("Delete", systemImage: "trash") }
+    }
+}
+
+/// An entry row's content (DESIGN 4.1): provenance glyph, name, detail line, kcal. Also the rows of an
+/// AI draft, which can add a protein figure under the kcal.
+struct EntryRowLabel: View {
+    var entry: Entry
+    var showsProtein = false
+    @Environment(\.units) private var units
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ProvenanceGlyph(entry: entry)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name).font(.body).foregroundStyle(.primary).lineLimit(1).truncationMode(.tail)
+                let detail = entry.detailLine(units)
+                if !detail.isEmpty {
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Fmt.kcal(entry.kcal))
+                    .numberFont(17, relativeTo: .body)
+                    .foregroundStyle(entry.kcal == nil ? .tertiary : .secondary)
+                    .contentTransition(.numericText(value: entry.kcal ?? 0))
+                if showsProtein {
+                    Text(entry.nutrients["protein"].map { "P \(Fmt.grams($0)) g" } ?? "P \(Fmt.missing)")
+                        .numberFont(13, .medium, relativeTo: .footnote)
+                        .foregroundStyle(Palette.proteinInk)
+                        .contentTransition(.numericText(value: entry.nutrients["protein"] ?? 0))
+                }
+            }
+        }
+        .frame(minHeight: 60)
+        .contentShape(Rectangle())
     }
 }
 

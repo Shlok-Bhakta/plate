@@ -1,0 +1,21 @@
+{"status": "draft", "step": "Checking the matches",
+ "draft": {
+   "items": [
+     {"catalog": "rice white cooked", "grams": 180, "meal": "dinner"},
+     {"food": "8a1f0c2e-1111-4c1e-9d55-7e0d9a6b2f10", "servings": 2, "meal": "dinner"},
+     {"name": "Chicken enchilada", "servings": 2, "grams": 340, "nutrients": {"kcal": 320, "protein": 18}, "meal": "dinner"}
+   ],
+   "preview": [
+     {"id": "p1", "day": "2026-11-09", "meal": "dinner", "logged_at": 1762740000000, "food_id": "f-rice", "name": "Rice, white, cooked",
+      "servings": 1.137, "serving_label": "cup (158 g)", "grams": 180, "nutrients": {"kcal": 234, "protein": 4.9, "carbs": 51}, "source": "agent",
+      "note": "from photo", "updated_at": 1762740000000, "deleted": false},
+     {"id": "p2", "day": "2026-11-09", "meal": "dinner", "logged_at": 1762740000001, "food_id": "8a1f0c2e-1111-4c1e-9d55-7e0d9a6b2f10",
+      "name": "Corn tortilla", "servings": 2, "serving_label": "tortilla (26 g)", "grams": 52, "nutrients": {"kcal": 114, "protein": 3},
+      "source": "agent", "updated_at": 1762740000001, "deleted": false},
+     {"id": "p3", "day": "2026-11-09", "meal": "dinner", "logged_at": 1762740000002, "food_id": "f-ench", "name": "Chicken enchilada",
+      "servings": 2, "serving_label": "serving", "grams": 340, "nutrients": {"kcal": 640, "protein": 36}, "source": "agent",
+      "updated_at": 1762740000002, "deleted": false}
+   ],
+   "summary": "Dinner: rice, two tortillas and two chicken enchiladas, about 988 kcal, 44 g protein"
+ },
+ "usage": {"prompt_tokens": 8210, "completion_tokens": 912, "cost": 0.0061}}

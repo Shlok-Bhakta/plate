@@ -51,6 +51,7 @@ struct AddSheet: View {
                     destination(route)
                 }
         }
+        .agentHost()
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
         .fullScreenCover(isPresented: $scanning) {
@@ -234,7 +235,12 @@ struct FoodSearchView: View {
         if !catalog.isEmpty { resultGroup("Foods", catalog) }
         if !products.isEmpty { resultGroup("Products", products) }
 
-        if mine.isEmpty && catalog.isEmpty && products.isEmpty && !loading && searchedQuery == trimmed {
+        let noMatch = mine.isEmpty && catalog.isEmpty && products.isEmpty && !loading && searchedQuery == trimmed
+        if pick == nil && !trimmed.isEmpty {
+            AskAIRow(query: trimmed, meal: meal, day: day, prominent: noMatch)
+                .padding(.horizontal, Space.l)
+        }
+        if noMatch {
             NoResults(query: trimmed, path: $path, onScan: onScan, picking: pick != nil)
         }
         if failed || (!store.isDemo && store.connection != .synced && !store.isOnline) {
@@ -277,6 +283,9 @@ private struct SuggestionsContent: View {
         let recents = Array(store.recentEntries.prefix(15))
         let frequent = store.frequent(meal: meal, limit: 4)
         let yesterday = store.previousMeal(meal, before: day)
+
+        SnapOrDescribeRow(meal: meal, day: day)
+            .padding(.horizontal, Space.l)
 
         if !favorites.isEmpty {
             section("Favorites") {
@@ -371,6 +380,87 @@ private struct SuggestionsContent: View {
         VStack(spacing: 0) { content() }
             .background(Palette.card, in: .rect(cornerRadius: Space.cardRadius, style: .continuous))
             .padding(.horizontal, Space.l)
+    }
+}
+
+/// The Add sheet's AI entry (DESIGN 4.2 addition): opens the camera, or Settings → AI logging when it
+/// isn't set up yet.
+struct SnapOrDescribeRow: View {
+    var meal: Meal
+    var day: String
+    @Environment(\.agentLauncher) private var agent
+    @State private var service = AgentService.shared
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { agent?(AgentCaptureRequest(meal: meal, day: day)) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Palette.accent.gradient, in: .rect(cornerRadius: 12, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Snap or describe").font(.body.weight(.semibold)).foregroundStyle(.primary)
+                        Text(service.isConfigured || service.config == nil ? "AI drafts the meal, you check it"
+                             : "Set up AI logging to start")
+                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .frame(minHeight: 64)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Snap or describe a meal")
+            Button { agent?(AgentCaptureRequest(mode: .text(""), meal: meal, day: day)) } label: {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Palette.accentInk)
+                    .frame(width: 44, height: 44)
+                    .background(Palette.chip, in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Describe a meal in words")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .background(Palette.card, in: .rect(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// "Ask AI: '2 eggs and toast'": the search text as a text-only AI job.
+struct AskAIRow: View {
+    var query: String
+    var meal: Meal
+    var day: String
+    /// Nothing matched: drawn as the main action rather than the last row.
+    var prominent: Bool
+    @Environment(\.agentLauncher) private var agent
+
+    var body: some View {
+        Button { agent?(AgentCaptureRequest(mode: .text(query), meal: meal, day: day)) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(prominent ? .white : Palette.accent)
+                    .frame(width: 32, height: 32)
+                    .background(prominent ? AnyShapeStyle(Palette.accent.gradient) : AnyShapeStyle(Palette.accent.opacity(0.14)),
+                                in: .rect(cornerRadius: 9, style: .continuous))
+                Text(TwoTone("Ask AI: ", "‘\(query)’", Palette.label, first: Palette.accentInk))
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 52)
+            .background(Palette.card, in: .rect(cornerRadius: 18, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask AI to log \(query)")
     }
 }
 
@@ -557,6 +647,7 @@ struct SearchTabView: View {
         }
         .searchable(text: $query, prompt: "Search foods")
         .onSubmit(of: .search) { remember(query) }
+        .agentHost()
         .fullScreenCover(isPresented: $scanning) {
             BarcodeScannerView(meal: meal, day: router.day) { route in
                 scanning = false

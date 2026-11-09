@@ -328,7 +328,7 @@ struct BarcodeScannerView: View {
         VStack(spacing: 16) {
             Image(systemName: "camera.fill").font(.system(size: 48)).foregroundStyle(.white.opacity(0.7))
             Text("Camera access is off").font(.title3.weight(.semibold)).foregroundStyle(.white)
-            Text("Plate uses the camera only to read barcodes on food packages.")
+            Text("Plate uses the camera to read barcodes on food packages and to snap meals.")
                 .font(.subheadline).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
             Button("Open Settings") {

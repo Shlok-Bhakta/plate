@@ -70,6 +70,15 @@ qrencode -t ansiutf8 "plate://setup?url=https%3A%2F%2Fplate.example.com&token=YO
 Days follow the server's time zone (`timezone` in the server's config), so the app, the server and its
 CLI agree on what "today" is. Until the first sync the app uses the phone's zone.
 
+## AI logging
+
+The camera button in the Quick Log bar (and "Snap or describe" in the Add sheet, or "Ask AI" under a search)
+turns a photo or a few words into a draft meal you check and log in one tap. The agent runs on your server
+(SPEC "AI logging"); set it up in Settings → AI logging: a provider (OpenRouter, or any OpenAI-compatible
+server), an API key, a model, and optionally your own instructions. The key goes to the server once and is
+never stored on the phone. Photos are scaled to 1024 px and re-encoded without EXIF or GPS before they're sent.
+Taking photos uses the camera permission; picking one uses the system photo picker, which needs none.
+
 ## Build it with the scripts (no Xcode project)
 
 `build-env.sh`, `ios-build.sh` (an unsigned device `.ipa`, for your own signing step), `sim-build.sh`

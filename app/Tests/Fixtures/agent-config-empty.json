@@ -1,0 +1,4 @@
+{"base_url": "http://192.168.1.20:11434/v1", "model": "", "has_key": false, "key_hint": null, "auto_log": true,
+ "max_jobs_per_day": 20, "usage": {"today": {"jobs": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": null},
+ "month": {"jobs": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": null}},
+ "system_prompt": "Only log what is on the plate.", "default_system_prompt": "You log meals for one person in Plate."}

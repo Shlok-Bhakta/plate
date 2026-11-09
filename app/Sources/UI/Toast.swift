@@ -142,6 +142,12 @@ enum Actions {
         Toasts.shared.show(ToastModel(symbol: "drop.fill", text: "Added \(Fmt.volume(ml, Units.current)) water", created: [e.id]))
     }
 
+    /// An AI log the server wrote (confirmed or auto-logged): the usual toast, and Undo deletes them.
+    static func agentLogged(_ entries: [Entry]) {
+        guard !entries.isEmpty else { return }
+        finishLog(entries)
+    }
+
     static func delete(_ entries: [Entry]) {
         store.delete(entries.map(\.id))
         Toasts.shared.deleted(entries)

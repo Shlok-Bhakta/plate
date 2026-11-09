@@ -287,6 +287,30 @@ final class Store {
         return e
     }
 
+    /// Entries the server logged for an AI job (confirm, or auto-log), shown at once instead of on the next
+    /// sync. They merge as server rows, so the sync cursor doesn't move and nothing is sent back. In demo
+    /// mode they're written locally. Returns the live copies (Undo deletes them).
+    @discardableResult
+    func ingestAgentEntries(_ entries: [Entry]) -> [Entry] {
+        guard !entries.isEmpty else { return [] }
+        if isDemo {
+            write(entries)
+            return entries
+        }
+        let proteinBefore = summary(for: Days.today).totals["protein"] ?? 0
+        let result = db.merge(SyncPayload(version: db.version, entries: entries))
+        if !result.changedDays.isEmpty { refresh(days: result.changedDays) }
+        checkProtein(before: proteinBefore)
+        scheduleSave()
+        return entries.compactMap { entry(id: $0.id) }
+    }
+
+    /// Agent entries on `day` logged since `ms` (auto-logged jobs whose reply didn't list its entries).
+    func agentEntries(day: String, since ms: Int) -> [Entry] {
+        summary(for: day).meals.values.flatMap { $0 }.filter { $0.source == "agent" && $0.loggedAt >= ms - 5000 }
+            .sorted { $0.loggedAt < $1.loggedAt }
+    }
+
     /// Saves an edited entry (live edits from Entry edit).
     func update(_ entry: Entry) {
         var e = entry
@@ -681,7 +705,10 @@ final class Store {
         applyZone(result.timezone)
         apply(result.payload)
         lastSyncAt = Date()
-        if !sameServer { HealthDaysPush.shared.serverChanged() }
+        if !sameServer {
+            HealthDaysPush.shared.serverChanged()
+            AgentService.shared.reset()
+        }
         if active { startLive() }
         Task { await flush() }
     }
@@ -701,6 +728,7 @@ final class Store {
         resetLocal()
         if Days.forgetServerZone() { zoneChanges += 1 }
         HealthDaysPush.shared.serverChanged()
+        AgentService.shared.reset()
         onLogChange?()
     }
 
