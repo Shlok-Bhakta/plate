@@ -1,0 +1,56 @@
+# XcodeGen spec for Plate: brew install xcodegen && cd app && xcodegen && open Plate.xcodeproj
+# Builds the same sources, asset catalog (with the alternate app icons), Info.plist and HealthKit
+# entitlement as the swiftc scripts. Set your bundle id and team in Local.xcconfig (see README.md).
+# Plate.xcodeproj is generated and gitignored; rerun xcodegen after adding or removing files.
+name: Plate
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+configFiles:
+  Debug: Plate.xcconfig
+  Release: Plate.xcconfig
+targets:
+  Plate:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      - path: Info.plist
+        buildPhase: none
+      - path: Plate.entitlements
+        buildPhase: none
+      - path: README.md
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_NAME: Plate
+        PRODUCT_MODULE_NAME: Plate
+        PRODUCT_BUNDLE_IDENTIFIER: $(PLATE_BUNDLE_ID)
+        DEVELOPMENT_TEAM: $(PLATE_DEVELOPMENT_TEAM)
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: $(PLATE_ENTITLEMENTS)
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Settings → App Icon: every AppIcon-<ID> set ships as an alternate icon.
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        ENABLE_PREVIEWS: NO
+schemes:
+  Plate:
+    build:
+      targets:
+        Plate: all
+    run:
+      config: Debug
+    archive:
+      config: Release

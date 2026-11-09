@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#F2BF4A"/>
+  <!-- P: stem + bowl -->
+  <path d="M322 172 H540 A252 252 0 0 1 540 676 H452 V808 A65 65 0 0 1 322 808 Z" fill="#3B2A22"/>
+  <!-- counter = plate -->
+  <circle cx="540" cy="424" r="150" fill="#F6EEDF"/>
+  <circle cx="540" cy="424" r="98" fill="#EBDCC2"/>
+</svg>

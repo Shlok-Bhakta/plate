@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.33" y1="0" x2="0.67" y2="1"><stop offset="0" stop-color="#FF9A52"/><stop offset="0.55" stop-color="#F26A1F"/><stop offset="1" stop-color="#D9480F"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#FCEFE5"/>
+    </linearGradient>
+    <radialGradient id="well" cx="0.5" cy="0.56" r="0.54" fx="0.5" fy="0.58"><stop offset="0" stop-color="#FFF8F1"/><stop offset="0.72" stop-color="#FFF1E6"/><stop offset="1" stop-color="#F7DCC7"/></radialGradient>
+    <linearGradient id="arc" gradientUnits="userSpaceOnUse" x1="712" y1="206" x2="312" y2="806">
+      <stop offset="0" stop-color="#F56A1E"/><stop offset="1" stop-color="#CE450C"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="22"/></filter>
+    
+  </defs>
+  <g>
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <circle cx="512" cy="520" r="348" fill="#7A2400" opacity="0.3" filter="url(#soft)"/>
+    <circle cx="512" cy="506" r="348" fill="url(#rim)"/>
+    <circle cx="512" cy="506" r="206" fill="url(#well)"/>
+    <path d="M 512.00 229.00 A 277 277 0 1 1 235.00 506.00" fill="none" stroke="url(#arc)" stroke-width="84" stroke-linecap="round"/>
+  </g>
+</svg>

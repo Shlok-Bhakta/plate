@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#F6EEDF"/>
+  <!-- fruit -->
+  <path d="M512 346 C560 316 640 308 702 338 C792 382 838 468 838 568 C838 730 702 838 512 838 C322 838 186 730 186 568 C186 468 232 382 322 338 C384 308 464 316 512 346 Z" fill="#D9573B"/>
+  <!-- calyx + stem -->
+  <g fill="#6E7F3E" transform="translate(512 352) scale(1.3)">
+    <path d="M0 -26 C44 -30 96 -16 122 0 C96 16 44 30 0 26 C-10 18 -10 -18 0 -26 Z" transform="rotate(196)"/>
+    <path d="M0 -26 C44 -30 96 -16 122 0 C96 16 44 30 0 26 C-10 18 -10 -18 0 -26 Z" transform="rotate(-16)"/>
+    <path d="M0 -26 C44 -30 96 -16 122 0 C96 16 44 30 0 26 C-10 18 -10 -18 0 -26 Z" transform="rotate(118) scale(0.82)"/>
+    <path d="M0 -26 C44 -30 96 -16 122 0 C96 16 44 30 0 26 C-10 18 -10 -18 0 -26 Z" transform="rotate(62) scale(0.82)"/>
+    <path d="M0 -26 C44 -30 96 -16 122 0 C96 16 44 30 0 26 C-10 18 -10 -18 0 -26 Z" transform="rotate(-90) scale(0.5)"/>
+    <circle r="36"/>
+    <rect x="-18" y="-104" width="36" height="104" rx="18" transform="rotate(12)"/>
+  </g>
+</svg>

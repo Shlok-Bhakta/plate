@@ -1,0 +1,21 @@
+# Secrets: optional built-in server and health tokens for the app. Never commit them.
+Secrets.swift
+HealthSecrets.swift
+app/Secrets.swift
+app/HealthSecrets.swift
+
+# App: local build settings (bundle id, team, secrets location) and generated or built output.
+app/local.env
+app/Local.xcconfig
+app/Plate.xcodeproj/
+app/DerivedData/
+app/build/
+*.ipa
+
+# Server build output.
+server/target/
+
+# Optional maintainer build tool (Gala) state.
+.gala/
+
+.DS_Store

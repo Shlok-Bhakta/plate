@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Plate B1 "Macro P": a monogram whose bowl is a plate split into protein, carbs and fat; the stem is calories. -->
+  <defs>
+    <linearGradient id="bg" x1="0.2" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#2A2742"/><stop offset="1" stop-color="#100F1A"/>
+    </linearGradient>
+    <radialGradient id="bgglow" cx="0.3" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#4A4478" stop-opacity="0.45"/><stop offset="1" stop-color="#4A4478" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="kc" gradientUnits="userSpaceOnUse" x1="290" y1="190" x2="440" y2="860">
+      <stop offset="0" stop-color="#FFA060"/><stop offset="0.45" stop-color="#F26E24"/><stop offset="1" stop-color="#D24E0B"/>
+    </linearGradient>
+    <linearGradient id="pr" gradientUnits="userSpaceOnUse" x1="450" y1="170" x2="720" y2="360">
+      <stop offset="0" stop-color="#958CFF"/><stop offset="1" stop-color="#5B4CE8"/>
+    </linearGradient>
+    <linearGradient id="cb" gradientUnits="userSpaceOnUse" x1="620" y1="300" x2="740" y2="600">
+      <stop offset="0" stop-color="#36CDE3"/><stop offset="1" stop-color="#0A8AA2"/>
+    </linearGradient>
+    <linearGradient id="ft" gradientUnits="userSpaceOnUse" x1="460" y1="470" x2="600" y2="640">
+      <stop offset="0" stop-color="#F0B53A"/><stop offset="1" stop-color="#BA7D00"/>
+    </linearGradient>
+    <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="300" y1="170" x2="560" y2="560">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <path d="M295 405 A235 235 0 0 1 428 193.3 L428 793.5 A66.5 66.5 0 0 1 295 793.5 Z" fill="black" stroke="black" stroke-width="36"/>
+      <line x1="593.6" y1="371.2" x2="764.0" y2="280.6" stroke="black" stroke-width="18"/><line x1="573.3" y1="462.5" x2="689.5" y2="616.6" stroke="black" stroke-width="18"/>
+    </mask>
+    <filter id="glass" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+      <feOffset in="SourceAlpha" dx="5" dy="8" result="o1"/>
+      <feComposite in="SourceAlpha" in2="o1" operator="out" result="e1"/>
+      <feGaussianBlur in="e1" stdDeviation="2.5" result="b1"/>
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.5"/>
+      <feComposite in2="b1" operator="in"/>
+      <feComposite in2="SourceAlpha" operator="in" result="hl"/>
+      <feOffset in="SourceAlpha" dx="-6" dy="-9" result="o2"/>
+      <feComposite in="SourceAlpha" in2="o2" operator="out" result="e2"/>
+      <feGaussianBlur in="e2" stdDeviation="5" result="b2"/>
+      <feFlood flood-color="#1A0F30" flood-opacity="0.28"/>
+      <feComposite in2="b2" operator="in"/>
+      <feComposite in2="SourceAlpha" operator="in" result="sd"/>
+      <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="sd"/><feMergeNode in="hl"/></feMerge>
+    </filter>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"/></filter>
+    <clipPath id="call"><path d="M295 405 A235 235 0 0 1 428 193.3 L428 793.5 A66.5 66.5 0 0 1 295 793.5 Z"/><path d="M530.0 170.0 A235 235 0 1 1 530.0 170.0 L530.0 303.0 A102 102 0 1 0 530.0 303.0 Z"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bgglow)"/>
+  <g transform="translate(518 510) scale(1.07) translate(-530 -515)">
+  <g filter="url(#sh)" opacity="0.6" transform="translate(6 26)" fill="#05040A">
+    <path d="M295 405 A235 235 0 0 1 428 193.3 L428 793.5 A66.5 66.5 0 0 1 295 793.5 Z"/><path d="M530.0 170.0 A235 235 0 1 1 530.0 170.0 L530.0 303.0 A102 102 0 1 0 530.0 303.0 Z" fill-rule="evenodd"/>
+  </g>
+  <g filter="url(#glass)">
+    <g mask="url(#m)">
+      <path d="M295.0 405.0 A235 235 0 0 1 737.5 294.7 L620.1 357.1 A102 102 0 0 0 428.0 405.0 Z" fill="url(#pr)"/>
+      <path d="M737.5 294.7 A235 235 0 0 1 671.4 592.7 L591.4 486.5 A102 102 0 0 0 620.1 357.1 Z" fill="url(#cb)"/>
+      <path d="M671.4 592.7 A235 235 0 0 1 295.0 405.0 L428.0 405.0 A102 102 0 0 0 591.4 486.5 Z" fill="url(#ft)"/>
+    </g>
+  </g>
+  <path d="M295 405 A235 235 0 0 1 428 193.3 L428 793.5 A66.5 66.5 0 0 1 295 793.5 Z" fill="url(#kc)" filter="url(#glass)"/>
+  <g clip-path="url(#call)"><rect width="1024" height="1024" fill="url(#sheen)"/></g>
+  </g>
+</svg>

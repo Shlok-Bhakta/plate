@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Plate as a launchd agent on macOS: runs `food serve` as you whenever you're logged in, with the
+  settings from ~/.config/plate/config.toml (run `food init` first). Replace YOU with your user
+  name (the paths must be absolute), then:
+
+    mkdir -p ~/.local/bin && cp target/release/food ~/.local/bin/food
+    cp deploy/plate.plist ~/Library/LaunchAgents/app.plate.server.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/app.plate.server.plist
+    tail -f ~/Library/Logs/plate.log
+
+  To stop it: launchctl bootout gui/$(id -u)/app.plate.server
+  The CLI socket is ~/.local/share/plate/food.sock on macOS.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>app.plate.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/.local/bin/food</string>
+        <string>serve</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/YOU</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/plate.log</string>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/plate.log</string>
+</dict>
+</plist>

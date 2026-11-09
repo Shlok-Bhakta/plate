@@ -1,0 +1,17 @@
+// Build settings for the XcodeGen project (project.yml). Don't edit these for your own build: put your
+// values in Local.xcconfig next to this file (gitignored), for example:
+//
+//   PLATE_BUNDLE_ID = com.yourname.plate
+//   PLATE_DEVELOPMENT_TEAM = ABCDE12345
+//
+// To build without HealthKit (no HealthKit capability on your App ID, or a free Apple account), add:
+//
+//   PLATE_ENTITLEMENTS =
+//
+// The app works without it; Settings → Apple Health then says it isn't available.
+
+PLATE_BUNDLE_ID = com.example.plate
+PLATE_DEVELOPMENT_TEAM =
+PLATE_ENTITLEMENTS = Plate.entitlements
+
+#include? "Local.xcconfig"

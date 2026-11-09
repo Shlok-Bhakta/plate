@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<!-- Plate B2 "Glass Plate": a frosted liquid-glass plate (with a pressed well) floating over protein, carbs and fat discs. -->
+<defs>
+  <linearGradient id="bg" x1="0.2" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#FCFAF7"/><stop offset="1" stop-color="#E8E2DA"/></linearGradient>
+  <linearGradient id="pr" gradientUnits="userSpaceOnUse" x1="392" y1="194" x2="632" y2="494"><stop offset="0" stop-color="#9088FF"/><stop offset="1" stop-color="#5546E2"/></linearGradient>
+<linearGradient id="cb" gradientUnits="userSpaceOnUse" x1="569" y1="500" x2="809" y2="800"><stop offset="0" stop-color="#3ED0E6"/><stop offset="1" stop-color="#0A8CA5"/></linearGradient>
+<linearGradient id="ft" gradientUnits="userSpaceOnUse" x1="215" y1="500" x2="455" y2="800"><stop offset="0" stop-color="#F4BC45"/><stop offset="1" stop-color="#B97C00"/></linearGradient>
+
+  <clipPath id="plate"><circle cx="512" cy="548" r="266"/></clipPath>
+  <filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="30"/></filter>
+  <filter id="sh" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="22"/></filter>
+  <radialGradient id="frost" cx="0.35" cy="0.28" r="0.85"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.60"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.26"/></radialGradient>
+  <linearGradient id="rim" x1="0.15" y1="0.1" x2="0.85" y2="0.9"><stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/><stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.12"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.6"/></linearGradient>
+  <linearGradient id="wellsh" x1="0.2" y1="0.1" x2="0.8" y2="0.9"><stop offset="0" stop-color="#3A2A50" stop-opacity="0.22"/><stop offset="0.6" stop-color="#3A2A50" stop-opacity="0"/></linearGradient>
+  <linearGradient id="wellhl" x1="0.2" y1="0.1" x2="0.8" y2="0.9"><stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.9"/></linearGradient>
+  <radialGradient id="edge" cx="0.5" cy="0.5" r="0.5"><stop offset="0.82" stop-color="#2A1E3A" stop-opacity="0"/><stop offset="1" stop-color="#2A1E3A" stop-opacity="0.11"/></radialGradient>
+</defs>
+<rect width="1024" height="1024" fill="url(#bg)"/>
+<g filter="url(#sh)" opacity="0.22" fill="#4A3A30" transform="translate(0 18)"><circle cx="512.0" cy="344.0" r="150" data-x="url(#pr)"/><circle cx="688.7" cy="650.0" r="150" data-x="url(#cb)"/><circle cx="335.3" cy="650.0" r="150" data-x="url(#ft)"/></g>
+<circle cx="512.0" cy="344.0" r="150" fill="url(#pr)"/><circle cx="688.7" cy="650.0" r="150" fill="url(#cb)"/><circle cx="335.3" cy="650.0" r="150" fill="url(#ft)"/>
+<circle cx="516" cy="568" r="266" fill="#1A1028" opacity="0.3" filter="url(#sh)"/>
+<g clip-path="url(#plate)">
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g filter="url(#blur)" transform="translate(512 548) scale(1.12) translate(-512 -548)"><circle cx="512.0" cy="344.0" r="150" fill="url(#pr)"/><circle cx="688.7" cy="650.0" r="150" fill="url(#cb)"/><circle cx="335.3" cy="650.0" r="150" fill="url(#ft)"/></g>
+  <circle cx="512" cy="548" r="266" fill="url(#frost)"/>
+  <circle cx="512" cy="548" r="266" fill="url(#edge)"/>
+  <!-- the plate's well: a shallow concave step -->
+  <circle cx="512" cy="548" r="168" fill="none" stroke="url(#wellsh)" stroke-width="5"/>
+  <circle cx="512" cy="548" r="172" fill="none" stroke="url(#wellhl)" stroke-width="4"/>
+</g>
+<circle cx="512" cy="548" r="263" fill="none" stroke="url(#rim)" stroke-width="6"/>
+<path d="M294.5 441.9 A242 242 0 0 1 453.5 313.2" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+</svg>

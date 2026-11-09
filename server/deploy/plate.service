@@ -1,0 +1,22 @@
+# Plate as a systemd user service: runs `food serve` as you, with the settings from
+# ~/.config/plate/config.toml (run `food init` first).
+#
+#   install -D -m 755 target/release/food ~/.local/bin/food
+#   install -D -m 644 deploy/plate.service ~/.config/systemd/user/plate.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now plate.service
+#   loginctl enable-linger "$USER"      # keep it running while you're logged out
+#   journalctl --user -u plate -f       # its log
+[Unit]
+Description=Plate food log server
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/food serve
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

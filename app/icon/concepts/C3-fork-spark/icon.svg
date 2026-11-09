@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#2D2770"/><stop offset="0.5" stop-color="#1C1850"/><stop offset="1" stop-color="#0E0C2C"/>
+    </linearGradient>
+    <radialGradient id="bgglow" cx="0.62" cy="0.3" r="0.6"><stop offset="0" stop-color="#7A5CFF" stop-opacity="0.45"/><stop offset="1" stop-color="#7A5CFF" stop-opacity="0"/></radialGradient>
+    <linearGradient id="forkfill" gradientUnits="userSpaceOnUse" x1="300" y1="150" x2="700" y2="900">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.55" stop-color="#F2EEFF"/><stop offset="1" stop-color="#CFC6F2"/>
+    </linearGradient>
+    <linearGradient id="sparkfill" gradientUnits="userSpaceOnUse" x1="520" y1="120" x2="800" y2="460">
+      <stop offset="0" stop-color="#FFE868"/><stop offset="0.5" stop-color="#FFC21F"/><stop offset="1" stop-color="#FF8A0A"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#B9A2FF" stop-opacity="0.45"/><stop offset="1" stop-color="#B9A2FF" stop-opacity="0"/></radialGradient>
+    <filter id="pf" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feFlood flood-color="#000" result="k"/>
+      <feComposite in="k" in2="SourceAlpha" operator="out" result="outside"/>
+      <feOffset in="outside" dx="-16" dy="-16" result="o1"/><feGaussianBlur in="o1" stdDeviation="14" result="o1b"/>
+      <feComposite in="o1b" in2="SourceAlpha" operator="in" result="darkEdge"/>
+      <feColorMatrix in="darkEdge" type="matrix" values="0 0 0 0 0.42  0 0 0 0 0.36  0 0 0 0 0.62  0 0 0 0.75 0" result="dark"/>
+      <feOffset in="outside" dx="7" dy="7" result="o2"/><feGaussianBlur in="o2" stdDeviation="5" result="o2b"/>
+      <feComposite in="o2b" in2="SourceAlpha" operator="in" result="liteEdge"/>
+      <feColorMatrix in="liteEdge" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.95 0" result="lite"/>
+      <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="dark"/><feMergeNode in="lite"/></feMerge>
+    </filter>
+    <filter id="ps" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feFlood flood-color="#000" result="k"/>
+      <feComposite in="k" in2="SourceAlpha" operator="out" result="outside"/>
+      <feOffset in="outside" dx="-12" dy="-12" result="o1"/><feGaussianBlur in="o1" stdDeviation="10" result="o1b"/>
+      <feComposite in="o1b" in2="SourceAlpha" operator="in" result="darkEdge"/>
+      <feColorMatrix in="darkEdge" type="matrix" values="0 0 0 0 0.8  0 0 0 0 0.25  0 0 0 0 0.0  0 0 0 0.7 0" result="dark"/>
+      <feOffset in="outside" dx="4" dy="4" result="o2"/><feGaussianBlur in="o2" stdDeviation="3" result="o2b"/>
+      <feComposite in="o2b" in2="SourceAlpha" operator="in" result="liteEdge"/>
+      <feColorMatrix in="liteEdge" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.7 0" result="lite"/>
+      <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="dark"/><feMergeNode in="lite"/></feMerge>
+    </filter>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="22"/></filter>
+    <filter id="hl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="cast" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="10"/></filter>
+    <g id="fork"><rect x="-122" y="-440" width="54" height="370" rx="27"/>
+<rect x="-27" y="-440" width="54" height="370" rx="27"/>
+<rect x="68" y="-440" width="54" height="370" rx="27"/>
+<path d="M-122,-200 L-68,-200 L-68,-150 A20.5,20.5 0 0 0 -27,-150 L-27,-200 L27,-200 L27,-150 A20.5,20.5 0 0 0 68,-150 L68,-200 L122,-200 L122,-66 C122,14 70,56 36,76 L31,138 C31,172 64,250 64,326 A64,64 0 0 1 -64,326 C-64,250 -31,172 -31,138 L-36,76 C-70,56 -122,14 -122,-66 Z"/></g>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bgglow)"/>
+  <g transform="translate(486 552) rotate(26) scale(0.95)">
+    <circle cx="0" cy="-268" r="300" fill="url(#halo)"/>
+    <use href="#fork" x="14" y="44" fill="#05041A" opacity="0.6" filter="url(#shadow)"/>
+  </g>
+  <g filter="url(#pf)"><g transform="translate(486 552) rotate(26) scale(0.95)" fill="url(#forkfill)"><use href="#fork"/></g></g>
+  <g transform="translate(486 552) rotate(26) scale(0.95)">
+    <path d="M0.0,-406.0 Q14.6,-282.6 138.0,-268.0 Q14.6,-253.4 0.0,-130.0 Q-14.6,-253.4 -138.0,-268.0 Q-14.6,-282.6 -0.0,-406.0 Z" transform="translate(16 30)" fill="#2A1A5E" opacity="0.55" filter="url(#cast)"/>
+  </g>
+  <g filter="url(#ps)"><g transform="translate(486 552) rotate(26) scale(0.95)" fill="url(#sparkfill)">
+    <path d="M0.0,-406.0 Q14.6,-282.6 138.0,-268.0 Q14.6,-253.4 0.0,-130.0 Q-14.6,-253.4 -138.0,-268.0 Q-14.6,-282.6 -0.0,-406.0 Z"/>
+    <path d="M200.0,-100.0 Q204.8,-64.8 240.0,-60.0 Q204.8,-55.2 200.0,-20.0 Q195.2,-55.2 160.0,-60.0 Q195.2,-64.8 200.0,-100.0 Z"/>
+  </g></g>
+  <g transform="translate(486 552) rotate(26) scale(0.95)">
+    <ellipse cx="-26" cy="-298" rx="9" ry="30" fill="#FFFFFF" opacity="0.85" filter="url(#hl)"/>
+    <ellipse cx="-46" cy="-276" rx="22" ry="7" fill="#FFFFFF" opacity="0.6" filter="url(#hl)"/>
+  </g>
+</svg>

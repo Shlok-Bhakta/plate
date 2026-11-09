@@ -1,0 +1,54 @@
+# A template: deploy/hardened/install.sh fills in the @...@ values.
+[Unit]
+Description=Plate: the food log, synced with the iPhone app, encrypted at rest
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=@DATA@
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+ExecStart=/usr/local/bin/food serve
+Environment=FOOD_DB=@DATA@/food.db
+Environment=FOOD_SOCKET=/run/personal-food/food.sock
+Environment=FOOD_LISTEN=127.0.0.1:18792
+Environment=FOOD_READER_UID=@READER_UID@
+LoadCredentialEncrypted=food-key:/etc/credstore.encrypted/personal-food-key.cred
+RuntimeDirectory=personal-food
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=5
+UMask=0077
+# A backstop: the service idles at a few MB, so a runaway gets killed and restarted, not the host.
+MemoryMax=1G
+
+# Network out stays open for Open Food Facts; everything else is locked down.
+ProtectSystem=strict
+ReadWritePaths=@DATA@
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

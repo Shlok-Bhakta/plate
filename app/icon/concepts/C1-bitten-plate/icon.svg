@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.25" y1="0" x2="0.75" y2="1">
+      <stop offset="0" stop-color="#FF7A52"/><stop offset="0.5" stop-color="#FA4B3E"/><stop offset="1" stop-color="#DA2747"/>
+    </linearGradient>
+    <radialGradient id="bgglow" cx="0.26" cy="0.12" r="0.8"><stop offset="0" stop-color="#FFC09A" stop-opacity="0.55"/><stop offset="1" stop-color="#FFC09A" stop-opacity="0"/></radialGradient>
+    <mask id="bite" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/><g fill="#000"><circle cx="641.3" cy="203.5" r="100"/><circle cx="741.8" cy="301.2" r="110"/><circle cx="820.6" cy="417.1" r="100"/></g>
+    </mask>
+    <g id="bitten" mask="url(#bite)"><circle cx="512" cy="494" r="326"/></g>
+    <linearGradient id="side" gradientUnits="userSpaceOnUse" x1="186" y1="0" x2="838" y2="0">
+      <stop offset="0" stop-color="#FCE6DA"/><stop offset="0.5" stop-color="#F3C3AE"/><stop offset="1" stop-color="#DE937C"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#FFEFE6"/></linearGradient>
+    <linearGradient id="wellrim" gradientUnits="userSpaceOnUse" x1="284" y1="266" x2="740" y2="722">
+      <stop offset="0" stop-color="#EDB9A3"/><stop offset="0.5" stop-color="#F8DCCF"/><stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <linearGradient id="band" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" stop-color="#FF6A4E"/><stop offset="1" stop-color="#E52E45"/></linearGradient>
+    <radialGradient id="well" cx="0.55" cy="0.6" r="0.6"><stop offset="0" stop-color="#FFFAF7"/><stop offset="1" stop-color="#FCE7DD"/></radialGradient>
+    <radialGradient id="spec" cx="0.28" cy="0.18" r="0.45"><stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="30"/></filter>
+    <filter id="b8" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9"/></filter>
+    <clipPath id="wellclip"><circle cx="512" cy="494" r="228"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bgglow)"/>
+  <use href="#bitten" x="18" y="88" fill="#6E0620" opacity="0.5" filter="url(#shadow)"/>
+  <g fill="url(#side)"><use href="#bitten" y="50"/><use href="#bitten" y="48"/><use href="#bitten" y="46"/><use href="#bitten" y="44"/><use href="#bitten" y="42"/><use href="#bitten" y="40"/><use href="#bitten" y="38"/><use href="#bitten" y="36"/><use href="#bitten" y="34"/><use href="#bitten" y="32"/><use href="#bitten" y="30"/><use href="#bitten" y="28"/><use href="#bitten" y="26"/><use href="#bitten" y="24"/><use href="#bitten" y="22"/><use href="#bitten" y="20"/><use href="#bitten" y="18"/><use href="#bitten" y="16"/><use href="#bitten" y="14"/><use href="#bitten" y="12"/><use href="#bitten" y="10"/><use href="#bitten" y="8"/><use href="#bitten" y="6"/><use href="#bitten" y="4"/><use href="#bitten" y="2"/></g>
+  <use href="#bitten" fill="url(#top)"/>
+  <g mask="url(#bite)">
+    <circle cx="512" cy="494" r="292" fill="none" stroke="url(#band)" stroke-width="22"/>
+    <circle cx="512" cy="494" r="228" fill="url(#wellrim)"/>
+    <circle cx="517" cy="501" r="214" fill="url(#well)"/>
+    <g clip-path="url(#wellclip)"><circle cx="482" cy="460" r="242" fill="none" stroke="#D99A84" stroke-opacity="0.35" stroke-width="22" filter="url(#b8)"/></g>
+    <ellipse cx="382" cy="344" rx="150" ry="95" transform="rotate(-38 382 344)" fill="url(#spec)" opacity="0.9"/>
+  </g>
+  <path d="M-12.4,-2.48 L-2.48,-11.16 L10.54,-5.58 L7.4399999999999995,8.68 L-6.2,9.3 Z" transform="translate(846,187.0) rotate(20)" fill="#E29A82" stroke="#E29A82" stroke-width="17.0" stroke-linejoin="round"/><path d="M-12.4,-2.48 L-2.48,-11.16 L10.54,-5.58 L7.4399999999999995,8.68 L-6.2,9.3 Z" transform="translate(846,178) rotate(20)" fill="#FFF6F0" stroke="#FFF6F0" stroke-width="17.0" stroke-linejoin="round"/>
+  <path d="M-8.06,-1.612 L-1.612,-7.2540000000000004 L6.850999999999999,-3.6270000000000002 L4.836,5.6419999999999995 L-4.03,6.045 Z" transform="translate(904,273.9) rotate(-40)" fill="#E29A82" stroke="#E29A82" stroke-width="11.0" stroke-linejoin="round"/><path d="M-8.06,-1.612 L-1.612,-7.2540000000000004 L6.850999999999999,-3.6270000000000002 L4.836,5.6419999999999995 L-4.03,6.045 Z" transform="translate(904,268) rotate(-40)" fill="#FFF6F0" stroke="#FFF6F0" stroke-width="11.0" stroke-linejoin="round"/>
+  <path d="M-5.58,-1.116 L-1.116,-5.021999999999999 L4.742999999999999,-2.5109999999999997 L3.348,3.9059999999999997 L-2.79,4.185 Z" transform="translate(872,120.0) rotate(60)" fill="#E29A82" stroke="#E29A82" stroke-width="7.6" stroke-linejoin="round"/><path d="M-5.58,-1.116 L-1.116,-5.021999999999999 L4.742999999999999,-2.5109999999999997 L3.348,3.9059999999999997 L-2.79,4.185 Z" transform="translate(872,116) rotate(60)" fill="#FFF6F0" stroke="#FFF6F0" stroke-width="7.6" stroke-linejoin="round"/>
+</svg>

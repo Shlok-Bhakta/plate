@@ -1,0 +1,8 @@
+[Unit]
+Description=Plate: push Health context (weight, activity, profile) from the health CLI to the food service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/food health-refresh
+Environment=PATH=/usr/local/bin:/usr/bin:/bin

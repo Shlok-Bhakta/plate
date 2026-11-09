@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#D9573B"/>
+  <!-- plate -->
+  <circle cx="512" cy="512" r="250" fill="#F6EEDF"/>
+  <circle cx="512" cy="512" r="170" fill="#EBDCC2"/>
+  <g fill="#F6EEDF">
+    <!-- fork -->
+    <rect x="128" y="282" width="22" height="190" rx="11"/>
+    <rect x="165" y="282" width="22" height="190" rx="11"/>
+    <rect x="202" y="282" width="22" height="190" rx="11"/>
+    <path d="M128 420 H224 V468 C224 500 208 516 198 522 H154 C144 516 128 500 128 468 Z"/>
+    <rect x="154" y="500" width="44" height="242" rx="22"/>
+    <!-- knife -->
+    <path d="M826 530 V302 C826 288 834 280 846 280 C880 280 894 384 894 474 C894 504 882 520 870 530 Z"/>
+    <rect x="826" y="500" width="44" height="242" rx="22"/>
+  </g>
+</svg>
