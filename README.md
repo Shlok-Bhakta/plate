@@ -204,4 +204,4 @@ Xcode with XcodeGen is the supported way to build the app.
 
 ## License
 
-License: not yet chosen. All rights reserved until a license is added.
+MIT. See [LICENSE](LICENSE). The bundled food data keeps its own terms: USDA FoodData Central is public domain, and Open Food Facts data is ODbL.
