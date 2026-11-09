@@ -3,8 +3,10 @@
 //! `food serve` is the service: it syncs with the iPhone app over HTTP and answers the CLI on a
 //! Unix socket. Every other subcommand is a client of that socket, so the database and its key
 //! never leave the service. `seed-usda` and `health refresh` do their downloading and Health
-//! reading as the caller, then hand the results to the service. Settings: config.rs.
+//! reading as the caller, then hand the results to the service. Settings: config.rs. AI logging
+//! (a photo or a sentence to a draft meal) runs in the service too: agent.rs, llm.rs.
 
+mod agent;
 mod backup;
 mod catalog;
 mod cli;
@@ -15,6 +17,7 @@ mod healthimport;
 mod healthpull;
 mod help;
 mod http;
+mod llm;
 mod nutrients;
 mod off;
 mod service;

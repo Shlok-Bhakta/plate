@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
 
-const SWITCHES: &[&str] = &["json", "json-out", "favorites", "off", "no-off", "help", "force"];
+const SWITCHES: &[&str] = &["json", "json-out", "favorites", "off", "no-off", "help", "force", "yes", "key-stdin", "default", "set", "reset"];
 
 /// A short usage error that points at the command's help.
 fn usage(command: &str, message: impl std::fmt::Display) -> String {
@@ -27,6 +27,8 @@ fn allowed_flags(command: &str) -> Option<(&'static [&'static str], bool)> {
         "report" => (&["days"], false),
         "health" => (&["format", "birth-date", "sex", "height-cm"], false),
         "init" => (&["data-dir", "listen", "timezone", "encryption", "force"], false),
+        "agent" => (&["base-url", "model", "key-stdin", "auto-log", "max-jobs", "photo", "text", "meal", "date", "yes", "default", "set",
+                      "reset"], false),
         "rm" | "barcode" | "recipe" | "goals" | "health-refresh" | "query" | "rotate-token" | "token" | "seed-usda" | "config"
         | "export" | "import" => (&[], false),
         _ => return None,
@@ -204,17 +206,7 @@ pub fn run(raw: &[String]) -> Result<(), String> {
         }
         "suggest" => {
             let reply = call(json!({"cmd": "suggest", "meal": args.get("meal")}))?;
-            if json_out { print_json(&reply) } else {
-                println!("for {}:", reply["meal"].as_str().unwrap_or(""));
-                for (label, key) in [("frequent", "frequent"), ("recent", "recents")] {
-                    for f in reply[key].as_array().cloned().unwrap_or_default().iter().take(8) {
-                        println!("  {label:<8} {}", food_line(f));
-                    }
-                }
-                for e in reply["yesterday"].as_array().cloned().unwrap_or_default() {
-                    println!("  yesterday {}", entry_line(&e));
-                }
-            }
+            if json_out { print_json(&reply) } else { print!("{}", format_suggest(&reply)) }
         }
         "food" => food_command(&args, json_out)?,
         "recipe" => {
@@ -271,6 +263,7 @@ pub fn run(raw: &[String]) -> Result<(), String> {
             print!("{}", config::init(&options, &|name| std::env::var(name).ok())?);
         }
         "config" => config_command(json_out)?,
+        "agent" => agent_command(&args, json_out)?,
         "export" => {
             let mut reply = call(json!({"cmd": "export"}))?;
             if let Some(o) = reply.as_object_mut() { o.remove("ok"); }
@@ -653,13 +646,182 @@ fn goals_command(args: &Args, json_out: bool) -> Result<(), String> {
     Ok(())
 }
 
+// MARK: AI logging
+
+fn agent_command(args: &Args, json_out: bool) -> Result<(), String> {
+    match args.pos(0) {
+        None | Some("config") => {
+            let mut set = json!({});
+            if let Some(url) = args.get("base-url") { set["base_url"] = json!(url); }
+            if let Some(model) = args.get("model") { set["model"] = json!(model); }
+            if args.has("key-stdin") {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+                set["api_key"] = json!(line.trim());
+            }
+            if let Some(on) = args.get("auto-log") {
+                set["auto_log"] = json!(match on {
+                    "on" | "true" | "yes" => true,
+                    "off" | "false" | "no" => false,
+                    other => return Err(args.usage(format!("--auto-log takes on or off, not {other:?}"))),
+                });
+            }
+            if let Some(n) = args.get("max-jobs") {
+                set["max_jobs_per_day"] = json!(n.parse::<i64>().map_err(|_| args.usage("--max-jobs needs a whole number"))?);
+            }
+            let request = if set.as_object().is_some_and(|o| o.is_empty()) { json!({"cmd": "agent-config"}) } else { json!({"cmd": "agent-config", "set": set}) };
+            let mut reply = call(request)?;
+            if json_out {
+                print_json(&reply);
+            } else {
+                if let Some(o) = reply.as_object_mut() { o.remove("default_system_prompt"); }
+                print!("{}", format_agent_config(&reply));
+            }
+        }
+        Some("models") => {
+            let q = args.positional[1..].join(" ");
+            let reply = call(json!({"cmd": "agent-models", "q": q}))?;
+            if json_out { print_json(&reply); return Ok(()); }
+            let list = reply["models"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() { println!("no models{}", if q.is_empty() { String::new() } else { format!(" match {q:?}") }); }
+            let price = |v: &Value| v.as_f64().map(|p| format!("${}", crate::store::trim_number(p))).unwrap_or_else(|| "?".into());
+            for m in &list {
+                let context = m["context_length"].as_f64().map(|c| format!(" · {}k context", num(c / 1000.0))).unwrap_or_default();
+                let prices = if m["prompt_price"].is_null() && m["completion_price"].is_null() { String::new() } else {
+                    format!(" · {} in / {} out per 1M tokens", price(&m["prompt_price"]), price(&m["completion_price"]))
+                };
+                let name = if m["name"] == m["id"] { String::new() } else { format!("  {}", m["name"].as_str().unwrap_or("")) };
+                println!("{}{name}{context}{prices}", m["id"].as_str().unwrap_or(""));
+            }
+        }
+        Some("test") => {
+            let reply = call(json!({"cmd": "agent-test"}))?;
+            if json_out { print_json(&reply) } else {
+                println!("ok: {} answered in {} ms", reply["model"].as_str().unwrap_or("?"), reply["latency_ms"]);
+            }
+        }
+        Some("prompt") => {
+            if args.has("set") {
+                let mut text = String::new();
+                std::io::stdin().read_to_string(&mut text).map_err(|e| e.to_string())?;
+                if text.trim().is_empty() { return Err(args.usage("--set reads the prompt from stdin, and it was empty (use --reset)")); }
+                call(json!({"cmd": "agent-config", "set": {"system_prompt": text}}))?;
+                println!("set a custom system prompt ({} characters); `food agent prompt --reset` goes back to the built-in one", text.chars().count());
+            } else if args.has("reset") {
+                call(json!({"cmd": "agent-config", "set": {"system_prompt": null}}))?;
+                println!("using the built-in system prompt");
+            } else {
+                let reply = call(json!({"cmd": "agent-config"}))?;
+                let custom = reply["system_prompt"].as_str().filter(|_| !args.has("default"));
+                let text = custom.or(reply["default_system_prompt"].as_str()).unwrap_or("");
+                print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
+            }
+        }
+        Some("log") => agent_log(args, json_out)?,
+        Some(other) => return Err(args.usage(format!("unknown agent subcommand {other:?}; use config, models, test, prompt or log"))),
+    }
+    Ok(())
+}
+
+fn format_agent_config(c: &Value) -> String {
+    let usage = |u: &Value| {
+        let cost = u["cost"].as_f64().map(|c| format!(" · ${c:.4}")).unwrap_or_default();
+        format!("{} jobs · {} + {} tokens{cost}", u["jobs"], num(get(u, "prompt_tokens")), num(get(u, "completion_tokens")))
+    };
+    let key = if c["has_key"] == true { format!("set ({})", c["key_hint"].as_str().unwrap_or("…")) } else {
+        "not set (food agent config --key-stdin)".to_string()
+    };
+    let prompt = match c["system_prompt"].as_str() {
+        Some(p) => format!("custom, {} characters (food agent prompt)", p.chars().count()),
+        None => "built in, from the CLI help (food agent prompt)".to_string(),
+    };
+    let model = c["model"].as_str().filter(|m| !m.is_empty()).unwrap_or("not set (food agent models, then --model ID)");
+    [("base_url", c["base_url"].as_str().unwrap_or("").to_string()), ("model", model.to_string()), ("api key", key),
+     ("auto_log", if c["auto_log"] == true { "on".into() } else { "off".into() }), ("max jobs/day", c["max_jobs_per_day"].to_string()),
+     ("system prompt", prompt), ("today", usage(&c["usage"]["today"])), ("this month", usage(&c["usage"]["month"]))]
+        .iter().map(|(label, value)| format!("{label:<14} {value}\n")).collect()
+}
+
+fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
+    let mut job = json!({});
+    if let Some(path) = args.get("photo") {
+        let bytes = std::fs::read(path).map_err(|e| format!("can't read {path}: {e}"))?;
+        if !bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return Err(format!("{path} isn't a JPEG; convert it first (for example `sips -s format jpeg` or ImageMagick's `magick`)"));
+        }
+        if bytes.len() > crate::agent::MAX_IMAGE {
+            return Err(format!("{path} is {:.1} MB; the limit is 1.5 MB, so shrink it to about 1024 px on the long edge first",
+                               bytes.len() as f64 / 1_048_576.0));
+        }
+        job["image"] = json!(crate::llm::base64_encode(&bytes));
+    }
+    let text = args.get("text").map(str::to_string).unwrap_or_else(|| args.positional[1..].join(" "));
+    if !text.trim().is_empty() { job["text"] = json!(text); }
+    if job.as_object().is_some_and(|o| o.is_empty()) {
+        return Err(args.usage("food agent log needs --photo PATH, --text T, or both"));
+    }
+    for key in ["meal", "date"] {
+        if let Some(v) = args.get(key) { job[key] = json!(v); }
+    }
+    let id = call(json!({"cmd": "agent-job", "job": job}))?["job"].as_str().unwrap_or("").to_string();
+    let mut step = String::new();
+    let job = loop {
+        let reply = call(json!({"cmd": "agent-job-get", "id": id, "wait": 25}))?;
+        if !json_out && reply["step"].as_str().is_some_and(|s| s != step) {
+            step = reply["step"].as_str().unwrap_or("").to_string();
+            eprintln!("  {step}");
+        }
+        if reply["status"] != "running" { break reply; }
+    };
+    match job["status"].as_str() {
+        Some("failed") => return Err(format!("AI logging failed: {}", job["error"].as_str().unwrap_or("no reason given"))),
+        Some("logged") => {
+            if json_out { print_json(&job); return Ok(()); }
+            println!("{}", job["draft"]["summary"].as_str().unwrap_or(""));
+            for e in job["entries"].as_array().cloned().unwrap_or_default() {
+                println!("logged {} to {}", entry_line(&e), e["meal"].as_str().unwrap_or(""));
+            }
+            println!("(auto-log is on)");
+            return Ok(());
+        }
+        _ => {}
+    }
+    if json_out && !args.has("yes") { print_json(&job); return Ok(()); }
+    if !json_out {
+        println!("{}", job["draft"]["summary"].as_str().unwrap_or(""));
+        for (i, e) in job["draft"]["preview"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+            let source = job["draft"]["items"][i]["catalog"].as_str().or(job["draft"]["items"][i]["food"].as_str())
+                .map(|s| format!(" (for {s:?})")).unwrap_or_default();
+            println!("  {}{source} to {} {}", entry_text(e), e["meal"].as_str().unwrap_or(""), e["day"].as_str().unwrap_or(""));
+        }
+        if let Some(error) = job["error"].as_str() { println!("note: {error}"); }
+    }
+    let yes = args.has("yes") || (unsafe { libc::isatty(0) } == 1 && {
+        eprint!("Log this? [y/N] ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+        matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    });
+    if !yes {
+        println!("not logged{}", if unsafe { libc::isatty(0) } == 1 { "" } else { " (add --yes to log the draft)" });
+        return Ok(());
+    }
+    let reply = call(json!({"cmd": "agent-confirm", "id": id}))?;
+    if json_out { print_json(&reply); return Ok(()); }
+    for e in reply["entries"].as_array().cloned().unwrap_or_default() {
+        println!("logged {} to {}", entry_line(&e), e["meal"].as_str().unwrap_or(""));
+    }
+    println!("{}", remaining_line(&reply["today"]));
+    Ok(())
+}
+
 // MARK: Formatting
 
 fn short(id: &Value) -> String {
     id.as_str().map(|s| s.chars().take(8).collect()).unwrap_or_else(|| "--------".into())
 }
 
-fn num(x: f64) -> String {
+pub(crate) fn num(x: f64) -> String {
     let rounded = x.round() as i64;
     let digits = rounded.abs().to_string();
     let mut out = String::new();
@@ -671,7 +833,7 @@ fn num(x: f64) -> String {
 }
 
 /// Small values keep a decimal: 1.3 g, 0.4 mg.
-fn amount(x: f64) -> String {
+pub(crate) fn amount(x: f64) -> String {
     if x.abs() >= 10.0 { num(x) } else { crate::store::trim_number((x * 10.0).round() / 10.0) }
 }
 
@@ -680,6 +842,11 @@ fn get(map: &Value, key: &str) -> f64 {
 }
 
 fn entry_line(e: &Value) -> String {
+    format!("{}  {}", short(&e["id"]), entry_text(e))
+}
+
+/// An entry without its id: name, brand, size, kcal and protein.
+pub(crate) fn entry_text(e: &Value) -> String {
     let n = &e["nutrients"];
     // Whole or quarter servings read as servings; anything logged by weight reads as grams.
     let servings = e["servings"].as_f64().unwrap_or(1.0);
@@ -698,11 +865,10 @@ fn entry_line(e: &Value) -> String {
     }
     let size = if size.is_empty() { String::new() } else { format!(" · {}", size.join(" ")) };
     let brand = e["brand"].as_str().filter(|b| !b.is_empty()).map(|b| format!(" ({b})")).unwrap_or_default();
-    format!("{}  {}{brand}{size} · {} kcal · {} g protein", short(&e["id"]), e["name"].as_str().unwrap_or("?"),
-            num(get(n, "kcal")), amount(get(n, "protein")))
+    format!("{}{brand}{size} · {} kcal · {} g protein", e["name"].as_str().unwrap_or("?"), num(get(n, "kcal")), amount(get(n, "protein")))
 }
 
-fn food_line(f: &Value) -> String {
+pub(crate) fn food_line(f: &Value) -> String {
     let source = f["source"].as_str().unwrap_or("");
     let tag = if f["id"].is_string() { format!("[mine {}]", short(&f["id"])) } else { format!("[{source}]") };
     let serving = &f["serving"];
@@ -717,7 +883,7 @@ fn food_line(f: &Value) -> String {
             f["source_ref"].as_str().unwrap_or(""))
 }
 
-fn food_detail(f: &Value) -> String {
+pub(crate) fn food_detail(f: &Value) -> String {
     let mut out = food_line(f);
     let portions: Vec<String> = f["portions"].as_array().cloned().unwrap_or_default().iter()
         .map(|p| format!("{} = {} g", p["label"].as_str().unwrap_or(""), amount(p["grams"].as_f64().unwrap_or(0.0)))).collect();
@@ -731,12 +897,12 @@ fn food_detail(f: &Value) -> String {
     out
 }
 
-fn weekday(day: &str) -> &'static str {
+pub(crate) fn weekday(day: &str) -> &'static str {
     let d = time::parse_day(day).unwrap_or(0);
     ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(d + 4).rem_euclid(7) as usize]
 }
 
-fn remaining_line(s: &Value) -> String {
+pub(crate) fn remaining_line(s: &Value) -> String {
     let (t, total) = (&s["targets"], &s["totals"]);
     let kcal_left = get(t, "kcal") - get(total, "kcal");
     let protein_left = get(t, "protein") - get(total, "protein");
@@ -745,7 +911,7 @@ fn remaining_line(s: &Value) -> String {
             num(get(total, "protein")), num(get(t, "protein")), num(protein_left.abs()), if protein_left >= 0.0 { "to go" } else { "over" })
 }
 
-fn format_day(s: &Value) -> String {
+pub(crate) fn format_day(s: &Value) -> String {
     let day = s["date"].as_str().unwrap_or("");
     let (t, total) = (&s["targets"], &s["totals"]);
     let mut out = format!("{} {day} · {} ({})\n", weekday(day), s["goals"]["plan"].as_str().unwrap_or(""), s["goals"]["mode"].as_str().unwrap_or(""));
@@ -775,12 +941,29 @@ fn format_day(s: &Value) -> String {
     out
 }
 
+/// `food suggest`: frequent and recent foods for the meal, then yesterday's same meal.
+pub(crate) fn format_suggest(reply: &Value) -> String {
+    let mut out = format!("for {}:\n", reply["meal"].as_str().unwrap_or(""));
+    for (label, key) in [("frequent", "frequent"), ("recent", "recents")] {
+        for f in reply[key].as_array().cloned().unwrap_or_default().iter().take(8) {
+            out.push_str(&format!("  {label:<8} {}\n", food_line(f)));
+        }
+    }
+    for e in reply["yesterday"].as_array().cloned().unwrap_or_default() {
+        out.push_str(&format!("  yesterday {}\n", entry_line(&e)));
+    }
+    if out.lines().count() == 1 {
+        out.push_str("  nothing yet: no foods logged in the last 90 days\n");
+    }
+    out
+}
+
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
-fn format_goals(g: &Value) -> String {
+pub(crate) fn format_goals(g: &Value) -> String {
     let t = &g["targets"];
     let mut out = format!("mode {} · plan {}\n", g["mode"].as_str().unwrap_or(""), g["plan"].as_str().unwrap_or(""));
     out.push_str(&format!("targets: {} kcal · protein {} g · carbs {} g · fat {} g · fiber {} g · water {} ml\n",

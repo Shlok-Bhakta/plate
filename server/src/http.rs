@@ -7,7 +7,7 @@
 //! body over 2 MB is a 413. One request per connection (`Connection: close`).
 
 use crate::db::{self, State};
-use crate::{nutrients, service, store};
+use crate::{agent, nutrients, service, store};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -16,6 +16,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MAX_BODY: usize = 2 * 1024 * 1024;
+/// POST /v1/agent/jobs carries a photo: up to 1.5 MB, so about 2 MB as base64.
+const MAX_AGENT_BODY: usize = 3 * 1024 * 1024;
 const MAX_HEAD: u64 = 64 * 1024;
 /// Days one POST /v1/health_days may carry.
 const MAX_HEALTH_DAYS: usize = 1000;
@@ -181,7 +183,7 @@ impl Request {
             _ => None,
         };
         if length.is_some_and(|n| n > max) {
-            return Err((413, "body over 2 MB".into()));
+            return Err(too_large(max));
         }
         if self.header("Expect").is_some_and(|e| e.eq_ignore_ascii_case("100-continue")) {
             let _ = self.writer.write_all(b"HTTP/1.1 100 Continue\r\n\r\n");
@@ -203,7 +205,7 @@ fn read_body(reader: &mut dyn Read, max: usize) -> Result<Vec<u8>, (u16, String)
     let mut body = Vec::new();
     reader.take(max as u64 + 1).read_to_end(&mut body).map_err(io_error)?;
     if body.len() > max {
-        return Err((413, "body over 2 MB".into()));
+        return Err(too_large(max));
     }
     Ok(body)
 }
@@ -225,7 +227,7 @@ fn read_chunked(reader: &mut impl BufRead, max: usize) -> Result<Vec<u8>, (u16, 
             }
         }
         if body.len() + size > max {
-            return Err((413, "body over 2 MB".into()));
+            return Err(too_large(max));
         }
         let start = body.len();
         body.resize(start + size, 0);
@@ -233,6 +235,10 @@ fn read_chunked(reader: &mut impl BufRead, max: usize) -> Result<Vec<u8>, (u16, 
         let mut crlf = [0u8; 2];
         reader.read_exact(&mut crlf).map_err(io_error)?;
     }
+}
+
+fn too_large(max: usize) -> (u16, String) {
+    (413, format!("body over {} MB", max >> 20))
 }
 
 fn io_error(error: std::io::Error) -> (u16, String) {
@@ -246,11 +252,15 @@ fn io_error(error: std::io::Error) -> (u16, String) {
 fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
+        202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         408 => "Request Timeout",
+        409 => "Conflict",
         413 => "Content Too Large",
+        429 => "Too Many Requests",
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
@@ -261,7 +271,7 @@ fn reason(status: u16) -> &'static str {
 }
 
 /// Serves one connection: one request, one reply, then close.
-fn connection(state: &State, stream: TcpStream, deadline: Duration, busy: bool) {
+fn connection(state: &Arc<State>, stream: TcpStream, deadline: Duration, busy: bool) {
     let started = Instant::now();
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let _ = stream.set_nodelay(true);
@@ -275,8 +285,9 @@ fn connection(state: &State, stream: TcpStream, deadline: Duration, busy: bool) 
         Ok(mut request) => {
             let target = std::mem::take(&mut request.target);
             let (path, query) = target.split_once('?').unwrap_or((&target, ""));
+            let created = request.method == "POST" && path == "/v1/agent/jobs";
             let (status, body) = match handle(state, &mut request, path, query) {
-                Ok(body) => (200, body),
+                Ok(body) => (if created { 202 } else { 200 }, body),
                 Err((status, error)) => (status, json!({"error": error})),
             };
             // Paths only: search terms and barcodes stay out of the journal.
@@ -344,7 +355,7 @@ fn authorized(state: &State, request: &Request) -> bool {
     })
 }
 
-fn handle(state: &State, request: &mut Request, path: &str, query: &str) -> Reply {
+fn handle(state: &Arc<State>, request: &mut Request, path: &str, query: &str) -> Reply {
     let method = request.method.clone();
     if (method.as_str(), path) == ("GET", "/v1/ping") {
         return Ok(json!({"ok": true, "version": db::version(&state.lock())}));
@@ -412,6 +423,40 @@ fn handle(state: &State, request: &mut Request, path: &str, query: &str) -> Repl
                 Err(e) => Err((502, e)),
             }
         }
+        (m, p) if p.starts_with("/v1/agent/") => agent_route(state, request, m, &p["/v1/agent/".len()..], query),
+        _ => Err((404, "not found".into())),
+    }
+}
+
+/// AI logging: settings, models, the key test, and jobs.
+fn agent_route(state: &Arc<State>, request: &mut Request, method: &str, path: &str, query: &str) -> Reply {
+    let parts: Vec<&str> = path.split('/').collect();
+    match (method, parts.as_slice()) {
+        ("GET", ["config"]) => agent::config(&state.lock()).map_err(server_error),
+        ("PUT", ["config"]) => agent::update_config(state, &read_json(request)?),
+        ("GET", ["models"]) => agent::models(state, &param(query, "q").unwrap_or_default()),
+        ("POST", ["test"]) => agent::test(state),
+        ("POST", ["jobs"]) => {
+            let body = request.body(MAX_AGENT_BODY)?;
+            agent::create(state, &serde_json::from_slice(&body).map_err(|e| bad(format!("body is not JSON: {e}")))?)
+        }
+        ("GET", ["jobs", id]) => {
+            let mut wait = param(query, "wait").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0).clamp(0.0, 25.0);
+            // With every long-poll slot taken, answer now; the client polls again.
+            let pass = if wait > 0.0 { LONG_POLLS.enter() } else { None };
+            if pass.is_none() {
+                wait = 0.0;
+            }
+            agent::get(state, id, wait)
+        }
+        ("POST", ["jobs", id, "confirm"]) => {
+            let body = request.body(MAX_BODY)?;
+            let body = if body.iter().all(u8::is_ascii_whitespace) { json!({}) } else {
+                serde_json::from_slice(&body).map_err(|e| bad(format!("body is not JSON: {e}")))?
+            };
+            agent::confirm(state, id, &body)
+        }
+        ("DELETE", ["jobs", id]) => agent::delete(state, id),
         _ => Err((404, "not found".into())),
     }
 }
@@ -562,6 +607,14 @@ mod tests {
         assert_eq!(http(addr, &format!("POST /v1/mutations HTTP/1.1\r\n{auth}Content-Length: 5000\r\n\r\n{{\"mutations\"")), 408);
         assert!(started.elapsed() < Duration::from_secs(3));
         assert_eq!(http(addr, &format!("POST /v1/mutations HTTP/1.1\r\n{auth}Content-Length: {}\r\n\r\n", MAX_BODY + 1)), 413);
+        // A job's photo may take more: 2.5 MB reaches the handler (which refuses this text).
+        let photo = format!("{{\"text\": \"{}\"}}", "A".repeat(MAX_BODY + MAX_BODY / 4));
+        assert_eq!(http(addr, &post("/v1/agent/jobs", &photo, &auth)), 400);
+        assert_eq!(http(addr, &format!("POST /v1/agent/jobs HTTP/1.1\r\n{auth}Content-Length: {}\r\n\r\n", MAX_AGENT_BODY + 1)), 413);
+        assert_eq!(http(addr, &post("/v1/agent/config", "{}", &auth)), 404);
+        let put = format!("PUT /v1/agent/config HTTP/1.1\r\n{auth}Content-Length: 25\r\n\r\n{{\"api_key\": \"sk-abc-123\"}}");
+        assert_eq!(http(addr, &put), 200);
+        assert_eq!(http(addr, &format!("GET /v1/agent/jobs/nope?wait=1 HTTP/1.1\r\n{auth}\r\n")), 404);
 
         // So is a client that never finishes its headers.
         let started = Instant::now();

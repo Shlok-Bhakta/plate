@@ -143,6 +143,12 @@ pub fn search(state: &State, text: &str, limit: usize, with_off: bool) -> Result
 
 /// `GET /v1/barcode/{code}`: the user's foods, then the OFF cache, then OFF. A found food is saved.
 pub fn barcode(state: &State, code: &str) -> Result<Option<Value>, String> {
+    lookup_barcode(state, code, true)
+}
+
+/// The same lookup, saving a found product as a food only with `save`. Without it only the OFF
+/// cache (not synced) is written, and `{"food": "off:<code>"}` logs the product later.
+pub fn lookup_barcode(state: &State, code: &str, save: bool) -> Result<Option<Value>, String> {
     let code: String = code.chars().filter(char::is_ascii_digit).collect();
     if code.len() < 6 || code.len() > 14 {
         return Err("a barcode is 6 to 14 digits".to_string());
@@ -156,6 +162,7 @@ pub fn barcode(state: &State, code: &str) -> Result<Option<Value>, String> {
         }
         match off::cached(&db, &code, now)? {
             off::Cached::Miss => return Ok(None),
+            off::Cached::Hit(food) if !save => return Ok(Some(food)),
             off::Cached::Hit(food) => {
                 drop(db);
                 return state.write(|db| save_food(db, &food)).map(Some);
@@ -166,6 +173,9 @@ pub fn barcode(state: &State, code: &str) -> Result<Option<Value>, String> {
     let fetched = off::fetch(&code)?;
     state.write(|db| {
         off::remember(db, &code, fetched.as_ref(), now)?;
+        if !save {
+            return Ok(fetched.clone());
+        }
         fetched.as_ref().map(|food| save_food(db, food)).transpose()
     })
 }
@@ -290,22 +300,33 @@ fn build_entry(db: &Connection, item: &Value, now: i64) -> Result<(Value, Option
     Ok((entry, Some(food)))
 }
 
+/// `food log` (and `--json` batches): every item, or none of them.
 pub fn log(state: &State, items: &[Value]) -> Result<Value, String> {
     if items.is_empty() {
         return Err("nothing to log".to_string());
     }
-    state.write(|db| {
-        let now = time::now_ms();
-        let mut logged = Vec::new();
-        for (i, item) in items.iter().enumerate() {
-            let (entry, food) = build_entry(db, item, now + i as i64).map_err(|e| format!("item {}: {e}", i + 1))?;
-            store::apply(db, "entries", "upsert", &entry)?;
-            let saved = store::live(db, "entries", entry["id"].as_str().unwrap())?.unwrap_or(entry);
-            logged.push(json!({"entry": saved, "matched": food.map(|f| json!({"id": f["id"], "name": f["name"], "source_ref": f["source_ref"]}))}));
-        }
-        let day = logged[0]["entry"]["day"].as_str().unwrap_or("").to_string();
-        Ok(json!({"logged": logged, "today": day_summary(db, &day)?}))
-    })
+    state.write(|db| log_items(db, items))
+}
+
+/// Exactly what `log` would return for these items, with nothing written (AI logging's draft).
+pub fn preview(state: &State, items: &[Value]) -> Result<Value, String> {
+    if items.is_empty() {
+        return Err("nothing to log".to_string());
+    }
+    state.dry_run(|db| log_items(db, items))
+}
+
+fn log_items(db: &Connection, items: &[Value]) -> Result<Value, String> {
+    let now = time::now_ms();
+    let mut logged = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let (entry, food) = build_entry(db, item, now + i as i64).map_err(|e| format!("item {}: {e}", i + 1))?;
+        store::apply(db, "entries", "upsert", &entry)?;
+        let saved = store::live(db, "entries", entry["id"].as_str().unwrap())?.unwrap_or(entry);
+        logged.push(json!({"entry": saved, "matched": food.map(|f| json!({"id": f["id"], "name": f["name"], "source_ref": f["source_ref"]}))}));
+    }
+    let day = logged[0]["entry"]["day"].as_str().unwrap_or("").to_string();
+    Ok(json!({"logged": logged, "today": day_summary(db, &day)?}))
 }
 
 pub fn edit(state: &State, id: &str, changes: &Value) -> Result<Value, String> {

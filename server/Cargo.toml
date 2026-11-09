@@ -10,7 +10,7 @@ name = "food"
 path = "src/main.rs"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "limits"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "limits", "hooks"] }
 libc = "0.2"
 sha2 = "0.10"
 serde_json = "1"

@@ -5,7 +5,7 @@
 
 use crate::db::{self, State};
 use crate::http::{self, Gate};
-use crate::{backup, catalog, goals, service, time};
+use crate::{agent, backup, catalog, goals, service, time};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -98,7 +98,7 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
     (result == 0).then_some(uid)
 }
 
-fn serve_client(state: &State, mut stream: UnixStream, extra: &[u32]) {
+fn serve_client(state: &Arc<State>, mut stream: UnixStream, extra: &[u32]) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(120)));
     let reply = match peer_uid(&stream) {
@@ -118,7 +118,7 @@ fn text<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {
     request[key].as_str().ok_or_else(|| format!("{} needs {key}", request["cmd"]))
 }
 
-pub fn handle(state: &State, line: &str) -> Value {
+pub fn handle(state: &Arc<State>, line: &str) -> Value {
     let Ok(request) = serde_json::from_str::<Value>(line) else {
         return json!({"ok": false, "error": "send one JSON object per line"});
     };
@@ -169,6 +169,14 @@ pub fn handle(state: &State, line: &str) -> Value {
             .write(|db| catalog::import(db, r["items"].as_array().map(Vec::as_slice).unwrap_or(&[])))
             .map(|n| json!({"imported": n})),
         "catalog-finish" => state.write(|db| catalog::finish(db, &r["sources"])),
+        "agent-config" if r["set"].is_object() => agent::update_config(state, &r["set"]).map_err(|e| e.1),
+        "agent-config" => agent::config(&state.lock()),
+        "agent-models" => agent::models(state, r["q"].as_str().unwrap_or("")).map_err(|e| e.1),
+        "agent-test" => agent::test(state).map_err(|e| e.1),
+        "agent-job" => agent::create(state, &r["job"]).map_err(|e| e.1),
+        "agent-job-get" => text(r, "id").and_then(|id| agent::get(state, id, r["wait"].as_f64().unwrap_or(0.0)).map_err(|e| e.1)),
+        "agent-confirm" => text(r, "id").and_then(|id| agent::confirm(state, id, r).map_err(|e| e.1)),
+        "agent-delete" => text(r, "id").and_then(|id| agent::delete(state, id).map_err(|e| e.1)),
         other => Err(format!("unknown cmd {other:?}")),
     };
     match result {
@@ -244,7 +252,7 @@ mod tests {
 
     #[test]
     fn requests_are_checked() {
-        let state = State::new(db::memory());
+        let state = Arc::new(State::new(db::memory()));
         assert_eq!(handle(&state, "not json")["ok"], false);
         assert_eq!(handle(&state, r#"{"cmd":"drop"}"#)["ok"], false);
         assert_eq!(handle(&state, r#"{"cmd":"ping"}"#)["ok"], true);

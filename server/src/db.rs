@@ -95,6 +95,22 @@ CREATE TABLE IF NOT EXISTS off_cache (
     food       TEXT
 );
 
+-- Secrets the service uses but never hands out: the AI provider's API key. `food query` can't
+-- read this table. Not synced, not exported.
+CREATE TABLE IF NOT EXISTS secrets (
+    name  TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- AI logging spend, per local day. cost is USD when the provider reports it, else NULL.
+CREATE TABLE IF NOT EXISTS agent_usage (
+    day               TEXT PRIMARY KEY,
+    jobs              INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost              REAL
+);
+
 -- App tokens, as SHA-256 hashes. A rotated-out token keeps working until expires_at.
 CREATE TABLE IF NOT EXISTS tokens (
     hash       TEXT PRIMARY KEY,
@@ -232,7 +248,19 @@ pub fn run_query(db: &Connection, sql: &str) -> Result<(Vec<serde_json::Value>, 
 pub fn run_query_within(db: &Connection, sql: &str, deadline: Duration) -> Result<(Vec<serde_json::Value>, bool), String> {
     // No single string or blob past the byte budget, so one value can't eat the memory either.
     db.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, QUERY_MAX_BYTES as i32);
-    let mut statement = db.prepare(sql).map_err(|e| e.to_string())?;
+    // The secrets table (the AI provider's key) is write-only: no query may read it.
+    db.authorizer(Some(|context: rusqlite::hooks::AuthContext<'_>| match context.action {
+        rusqlite::hooks::AuthAction::Read { table_name, .. } if table_name.eq_ignore_ascii_case("secrets") => {
+            rusqlite::hooks::Authorization::Deny
+        }
+        _ => rusqlite::hooks::Authorization::Allow,
+    }));
+    let prepared = db.prepare(sql);
+    db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>);
+    let mut statement = prepared.map_err(|e| match e.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::AuthorizationForStatementDenied) => "not readable: the secrets table holds the AI provider's key".to_string(),
+        _ => e.to_string(),
+    })?;
     if !statement.readonly() {
         return Err("read-only: only SELECT works here".to_string());
     }
@@ -302,17 +330,19 @@ pub fn next_version(db: &Connection) -> Result<i64, String> {
 
 // MARK: The shared service state
 
-/// One connection behind a mutex (one user, small writes), plus the version the long-poll waits on.
+/// One connection behind a mutex (one user, small writes), plus the version the long-poll waits on
+/// and the AI logging jobs (in memory only).
 pub struct State {
     db: Mutex<Connection>,
     version: Mutex<i64>,
     changed: Condvar,
+    pub agent: crate::agent::Jobs,
 }
 
 impl State {
     pub fn new(db: Connection) -> State {
         let version = version(&db);
-        State { db: Mutex::new(db), version: Mutex::new(version), changed: Condvar::new() }
+        State { db: Mutex::new(db), version: Mutex::new(version), changed: Condvar::new(), agent: crate::agent::Jobs::new() }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -333,6 +363,16 @@ impl State {
             self.changed.notify_all();
         }
         Ok(out)
+    }
+
+    /// Runs `work` exactly as `write` would, then rolls it all back, the version counter included:
+    /// what a write would return, with nothing written. AI logging previews a meal with it.
+    pub fn dry_run<T>(&self, work: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+        let mut db = self.lock();
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let out = work(&tx);
+        tx.rollback().map_err(|e| e.to_string())?;
+        out
     }
 
     /// Waits until the version passes `since`, or `timeout` runs out. Returns the current version.

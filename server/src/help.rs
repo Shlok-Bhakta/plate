@@ -20,6 +20,7 @@ Commands
   recipe          add or edit a recipe built from ingredients
   goals           targets, plan (cut, maintain, bulk), overrides, body profile, auto or manual
   report          averages, adherence, weakest nutrients and trends over N days
+  agent           AI logging for the app's photos: provider, model, key, prompt, spend (admin)
   query           read-only SQL over the database
   health          import daily weight and activity (CSV or JSON), or refresh from a health server
   token           print a new app token (admin; `food rotate-token` is the same)
@@ -459,7 +460,10 @@ Tables
                name, category, nutrients (JSON per 100 g), portions (JSON [{label, grams}]).
   catalog_fts  full-text index on catalog name and category; join on catalog_fts.rowid = fdc_id.
   off_cache    Open Food Facts lookups by barcode (food is null for a miss).
-  meta         key/value: version, profile (the body facts from `food goals profile`), catalog.
+  meta         key/value: version, profile (the body facts from `food goals profile`), catalog,
+               agent (the AI logging settings).
+  agent_usage  AI logging spend per day: jobs, prompt_tokens, completion_tokens, cost (USD).
+  secrets      holds the AI provider's key; no query can read it.
   List tables with: food query "SELECT name FROM sqlite_master WHERE type = 'table'"
   Columns with:     food query "SELECT name FROM pragma_table_info('entries')"
 
@@ -624,6 +628,67 @@ encryption
 The CLI never opens the database (the service does), so only `food serve` needs the key.
 "#;
 
+pub const AGENT: &str = r#"food agent: AI logging, a photo or a sentence to a draft meal (admin).
+
+Usage
+  food agent config [--base-url U] [--model M] [--key-stdin] [--auto-log on|off] [--max-jobs N]
+  food agent models [query]
+  food agent test
+  food agent prompt [--default | --set < FILE | --reset]
+  food agent log [--photo PATH] [--text T | "text"] [--meal M] [--date D] [--yes]
+  Every one takes --json.
+
+The service runs the agent for the app's photo logging: it sends the photo and the note to an
+OpenAI-compatible Chat Completions API (OpenRouter by default; OpenAI, a local server and other
+compatible ones work), lets the model use read-only tools that are the food commands, and keeps
+the last meal it proposed as a draft. Nothing is logged until the draft is confirmed, or at once
+with auto-log on. You (a CLI agent) don't need it: log with `food log` yourself.
+
+config     with no flags, prints the settings and the spend today and this month.
+  --base-url U       the API base, before /chat/completions; default https://openrouter.ai/api/v1
+  --model M          a model id that takes images and calls tools (`food agent models`)
+  --key-stdin        read the API key from stdin, keeping it out of the shell history; an empty
+                     line clears it. It's stored in the encrypted database and never shown again:
+                     not by config, the app's API or `food query`.
+  --auto-log on|off  log a good draft straight away (default off; the app still offers undo)
+  --max-jobs N       jobs per day, 1 to 1000 (default 60): a backstop against runaway spend
+models     the provider's models, matching the query. On OpenRouter only those that take images
+           and call tools, with USD per 1M tokens in and out. Cached for an hour.
+test       one tiny request with the current settings: whether the key, model and credit work,
+           and how long it took.
+prompt     prints the system prompt in use. --default prints the built-in one, which is
+           `food log --help`, `food help nutrients`, `food search --help` and
+           `food barcode --help` with a short preface; --set reads a custom one from stdin (at
+           most 32 KB); --reset goes back to the built-in one. Whatever it says, each job also
+           sends the date and time, the meal, what's left today, the note and any barcodes, and
+           the same tools.
+log        runs one job, prints the draft, and asks before logging it. --yes logs it without
+           asking; with no terminal and no --yes nothing is logged.
+  --photo PATH   a JPEG of at most 1.5 MB. It isn't resized: shrink it to about 1024 px first.
+  --text T       what was eaten, or a note about the photo ("the rice was brown").
+  --meal M, --date D  when it was eaten (default from the clock, and today).
+
+The model's tools (each the same as a command; none of them writes)
+  search_foods     food search "q" [--no-off]
+  lookup_barcode   food barcode <digits>, without saving the product
+  suggest          food suggest [--meal M]
+  get_today        food today [--date D]
+  get_goals        food goals
+  propose_meal     food log --json as a dry run; the last good one is the draft
+
+Limits: 2 jobs at once, the daily cap, 6 model turns, 90 s a request, 3 minutes a job. 429s,
+5xx and dropped connections are retried twice. Errors say what to do: "API key is invalid",
+"out of credit", "unknown model", a content filter or the model declining. Entries it logs have
+source agent and the note (or "from photo") as their note.
+
+Examples
+  printf '%s\n' "$OPENROUTER_API_KEY" | food agent config --key-stdin --model openai/gpt-5-mini
+  food agent models gemini
+  food agent test
+  food agent log --photo dinner.jpg --text "half the rice"
+  food agent log "two eggs and toast" --meal breakfast --yes
+"#;
+
 pub const SERVE: &str = r#"food serve: the service (admin).
 
 Usage
@@ -652,6 +717,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("recipe", RECIPE),
     ("goals", GOALS),
     ("report", REPORT),
+    ("agent", AGENT),
     ("query", QUERY),
     ("health", HEALTH),
     ("token", TOKEN),
