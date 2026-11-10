@@ -13,6 +13,8 @@ enum DemoAgent {
         c.today = AgentUsage(jobs: 3, promptTokens: 14_210, completionTokens: 1_884, cost: 0.0124)
         c.month = AgentUsage(jobs: 41, promptTokens: 201_455, completionTokens: 26_310, cost: 0.1873)
         c.defaultSystemPrompt = defaultPrompt
+        c.reasoningEffort = .low
+        c.verifyMatches = false
         return c
     }
 

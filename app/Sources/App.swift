@@ -35,11 +35,15 @@
 //                     -PlateSetIcon E1|D1|D2|D3|D4|E2|E3|E4 switches the home-screen icon a second after launch;
 //                     -PlateGoalEdit <key> opens a goal's inline editor;
 //                     -PlateHealth syncing|retry|none shows another Apple Health state in demo mode
-//   AI logging: -PlateScreen agentsettings | agentinstructions | agentmodels (Settings → AI logging) |
+//   AI logging: -PlateScreen agentsettings | agentinstructions | agentmodels | agentspeed (Settings → AI logging,
+//              scrolled to Speed) |
 //              capture (the camera; -PlateCaptureReview YES starts on the demo shot) | capturetext |
 //              agentprogress (-PlateAgentHold YES stays on it) | agentdraft | agenterror (with
 //              -PlateAgentError noKey|invalidKey|outOfCredit|unknownModel|timeout|offline|dailyLimit|busy|server) |
-//              agenttext (a text job for -PlateQuery) | agentsetup (the not-set-up sheet);
+//              agenttext (a text job for -PlateQuery) | agentsetup (the not-set-up sheet) |
+//              agentworking (a photo job hidden at once: the Working pill on the Quick Log bar);
+//              -PlateAgentSlow YES|<seconds> (demo jobs take 45 s or that long: the timer, "taking longer"),
+//              -PlateAgentEffort none|low|medium|high (the demo's Speed),
 //              -PlateAgent unconfigured, -PlateAgentAutoLog YES, -PlateDemoPhoto <file in Documents>,
 //              -PlateInstructionsCollapsed YES
 //   Reminders: -PlateScreen reminders (Settings, scrolled to Reminders); -PlateReminders denied shows the
@@ -194,7 +198,7 @@ enum DebugLaunch {
         case "scanner": router.openAdd(start: .scanner)
         case "entry":
             if let e = store.summary(for: router.day).entries(.breakfast).first { router.editing = EntryRef(id: e.id) }
-        case "agentsettings", "agentinstructions", "agentmodels":
+        case "agentsettings", "agentinstructions", "agentmodels", "agentspeed":
             router.todayPath = [.settings]
         case "settings", "goals", "basis", "appicon", "units", "reminders", "about", "health", "healthlog", "micros", "mealsplit", "limits":
             router.todayPath = [.settings]

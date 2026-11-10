@@ -368,11 +368,7 @@ struct CaptureView: View {
                 unreadable = true
                 return
             }
-            var i = input
-            i.image = prepared.jpeg
-            i.barcodes = prepared.barcodes
-            i.text = note
-            onSend(AgentRun(input: i, thumbnail: photo))
+            onSend(AgentRun(input: PhotoPrep.input(prepared, note: note, meal: request.meal, day: request.day), thumbnail: photo))
         }
     }
 }

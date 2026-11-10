@@ -2,7 +2,8 @@
 // serving scaling, nutrient sums, last-writer-wins merging of sync payloads, outbox persistence,
 // lenient decoding, day keys and the server's time zone, display units, server setup links, the Apple Health
 // daily totals, the demo fixture, and AI logging (config, model, job and draft decoding from Tests/Fixtures,
-// draft editing math, error copy, and photo resizing with EXIF and GPS stripped).
+// draft editing math, error copy, photo resizing with EXIF and GPS stripped, the speed settings, elapsed_ms and
+// cancelled jobs, the progress timer, and what a hidden job does when it finishes).
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -849,6 +850,99 @@ let textOnly = (try? AgentJobInput(text: "2 eggs", meal: .breakfast, day: "2026-
     .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
 check(textOnly["image"] == nil && textOnly["barcodes"] == nil && AgentJobInput(text: "  ", meal: .snack, day: "d").isEmpty, "text-only body")
 
+// Job body: a base64 made ahead of time (while the note was typed) is sent as is.
+var preEncoded = AgentJobInput(image: Data([1, 2, 3]), text: nil, meal: .lunch, day: "2026-11-09")
+preEncoded.imageBase64 = Data([1, 2, 3]).base64EncodedString()
+check((try? preEncoded.body()).flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) }?["image"] == .string("AQID"),
+      "a pre-encoded image goes into the body unchanged")
+
+// MARK: AI logging: speed settings, elapsed_ms and cancelled jobs
+
+let speedConfig = try? JSONDecoder().decode(AgentConfig.self, from: Data(#"{"has_key":true,"model":"m","reasoning_effort":"medium","verify_matches":true}"#.utf8))
+check(speedConfig?.reasoningEffort == .medium && speedConfig?.effort == .medium && speedConfig?.verifyMatches == true
+      && speedConfig?.hasSpeedSettings == true, "config: reasoning_effort and verify_matches")
+check(agentConfig?.reasoningEffort == nil && agentConfig?.verifyMatches == nil && agentConfig?.effort == .low
+      && agentConfig?.hasSpeedSettings == false, "config: an older server without the fields shows the default (Fast) and says so")
+let oddEffort = try? JSONDecoder().decode(AgentConfig.self, from: Data(#"{"reasoning_effort":"minimal","verify_matches":0}"#.utf8))
+check(oddEffort?.reasoningEffort == AgentEffort.none && oddEffort?.verifyMatches == false, "config: minimal is Fastest, 0 is false")
+check((try? JSONDecoder().decode(AgentConfig.self, from: Data(#"{"reasoning_effort":"ultra"}"#.utf8)))?.effort == .low,
+      "config: an unknown effort falls back to the default")
+if let c = speedConfig, let data = try? JSONEncoder().encode(c), let back = try? JSONDecoder().decode(AgentConfig.self, from: data) {
+    check(back == c && back.reasoningEffort == .medium, "speed settings round-trip through the cache")
+} else { check(false, "speed config encodes") }
+check(AgentEffort.allCases.map(\.title) == ["Fastest", "Fast", "Balanced", "Thorough"]
+      && AgentEffort.allCases.map(\.rawValue) == ["none", "low", "medium", "high"] && AgentEffort.standard == .low, "speed titles map to reasoning_effort")
+check(changeJSON(AgentConfigChange(reasoningEffort: AgentEffort.none)) == ["reasoning_effort": .string("none")]
+      && changeJSON(AgentConfigChange(reasoningEffort: .high, verifyMatches: false)) == ["reasoning_effort": .string("high"), "verify_matches": .bool(false)]
+      && changeJSON(AgentConfigChange(verifyMatches: true)) == ["verify_matches": .bool(true)], "PUT sends only the speed fields being changed")
+
+let timedJob = try? JSONDecoder().decode(AgentJob.self, from: Data(#"{"status":"running","step":"Searching: rice","elapsed_ms":12345}"#.utf8))
+check(timedJob?.elapsedMs == 12345 && timedJob?.status == .running, "job: elapsed_ms")
+check(running?.elapsedMs == nil, "job: no elapsed_ms from an older server")
+check((try? JSONDecoder().decode(AgentJob.self, from: Data(#"{"status":"running","elapsed_ms":-5}"#.utf8)))?.elapsedMs == nil, "job: a negative elapsed_ms is ignored")
+let cancelledJob = try? JSONDecoder().decode(AgentJob.self, from: Data(#"{"status":"cancelled","elapsed_ms":4100,"draft":null}"#.utf8))
+check(cancelledJob?.status == .cancelled && cancelledJob?.draft == nil && cancelledJob?.elapsedMs == 4100, "job: cancelled")
+check(AgentJobStatus(wire: "canceled") == .cancelled && AgentJobStatus(wire: "error") == .failed && AgentJobStatus(wire: "queued") == .running
+      && AgentJobStatus(wire: nil) == .running && AgentJobStatus(wire: "LOGGED") == .logged, "job status: lenient spellings")
+
+// MARK: AI logging: the progress timer
+
+let t0 = Date(timeIntervalSince1970: 1_000_000)
+var clock = AgentClock(start: t0)
+check(clock.seconds(at: t0) == 0 && clock.seconds(at: t0.addingTimeInterval(12.7)) == 12 && clock.label(at: t0.addingTimeInterval(12.7)) == "12 s",
+      "the timer ticks locally: 12 s")
+check(clock.seconds(at: t0.addingTimeInterval(-3)) == 0, "never negative")
+check(AgentClock.label(59) == "59 s" && AgentClock.label(60) == "1 min" && AgentClock.label(65) == "1 min 5 s" && AgentClock.label(-1) == "0 s",
+      "labels past a minute")
+clock.correct(elapsedMs: 10_800, at: t0.addingTimeInterval(10))
+check(clock.start == t0, "a small difference (upload, latency) isn't corrected")
+clock.correct(elapsedMs: 20_000, at: t0.addingTimeInterval(10))
+check(clock.seconds(at: t0.addingTimeInterval(10)) == 20 && clock.seconds(at: t0.addingTimeInterval(15)) == 25,
+      "the server says it has run longer (the phone was asleep): the timer jumps ahead")
+var behind = AgentClock(start: t0)
+behind.correct(elapsedMs: 5_000, at: t0.addingTimeInterval(9))
+check(behind.seconds(at: t0.addingTimeInterval(9)) == 9 && behind.seconds(at: t0.addingTimeInterval(11)) == 9
+      && behind.seconds(at: t0.addingTimeInterval(14)) == 10 && behind.seconds(at: t0.addingTimeInterval(20)) == 16,
+      "the server says less: the display holds, never runs backwards, then follows the server")
+check(!clock.isSlow(at: t0) && AgentClock(start: t0).isSlow(at: t0.addingTimeInterval(30)) && !AgentClock(start: t0).isSlow(at: t0.addingTimeInterval(29.9)),
+      "taking longer than usual from 30 s")
+check(!AgentClock(start: t0).confirmsCancel(at: t0.addingTimeInterval(10)) && AgentClock(start: t0).confirmsCancel(at: t0.addingTimeInterval(10.5)),
+      "Cancel asks first past 10 s")
+
+// MARK: AI logging: hidden jobs (background continuation)
+
+func arrive(_ state: AgentRunState, fg: Bool = true, modal: Bool = false, allowed: Bool = true) -> AgentArrival {
+    AgentArrival.decide(state, meal: .lunch, summary: "Lunch: soup, about 400 kcal", foreground: fg, modalOpen: modal, notificationsAllowed: allowed)
+}
+check(arrive(.draft(kcal: 780)) == .reopen && arrive(.failed("Out of credit")) == .reopen,
+      "in front with nothing modal: the draft (or the error) opens again")
+check(arrive(.draft(kcal: 780), modal: true) == .notify(title: "Your lunch draft is ready", body: "Lunch: soup, about 400 kcal"),
+      "a sheet is open: a notification instead")
+check(arrive(.draft(kcal: 780), fg: false) == .notify(title: "Your lunch draft is ready", body: "Lunch: soup, about 400 kcal"),
+      "in the background: a notification")
+check(arrive(.logged(kcal: 780)) == .toast, "auto-logged in front: the undo toast")
+check(arrive(.logged(kcal: 780), fg: false) == .notify(title: "Logged lunch · 780 kcal", body: "Lunch: soup, about 400 kcal Tap to undo."),
+      "auto-logged in the background: Logged lunch · 780 kcal")
+check(arrive(.failed("Out of credit"), fg: false) == .notify(title: "Couldn't draft your lunch", body: "Out of credit. Tap to try again."),
+      "a failure in the background says so")
+check(arrive(.draft(kcal: 1), fg: false, allowed: false) == .later && arrive(.draft(kcal: 1), modal: true, allowed: false) == .later
+      && arrive(.logged(kcal: 1), modal: true, allowed: false) == .toast, "no notifications: the pill waits (an auto-log still toasts)")
+check(arrive(.cancelled) == .drop && arrive(.cancelled, fg: false) == .drop && arrive(.done) == .drop && arrive(.running) == .later,
+      "cancelled: nothing to show")
+check(AgentArrival.notification(.draft(kcal: 1), meal: .snack, summary: "  ")?.body == "Tap to check it and log it."
+      && AgentArrival.notification(.draft(kcal: 1), meal: .snack, summary: nil)?.title == "Your snack draft is ready", "notification fallbacks")
+
+let ra = UUID(), rb = UUID(), rc = UUID()
+check(AgentPill.make([]) == nil && AgentPill.make([(ra, .running, false)]) == nil, "no pill while the sheet is on screen")
+check(AgentPill.make([(ra, .running, true)]) == AgentPill(kind: .working, runID: ra, count: 1)
+      && AgentPill.make([(ra, .running, true)])?.title == "Working…", "a hidden job: Working…")
+check(AgentPill.make([(ra, .running, true), (rb, .draft(kcal: 5), true)]) == AgentPill(kind: .ready, runID: rb, count: 2),
+      "a finished draft beats one still working")
+check(AgentPill.make([(ra, .failed("x"), true), (rb, .logged(kcal: 1), true), (rc, .cancelled, true)]) == AgentPill(kind: .failed, runID: ra, count: 1),
+      "logged and cancelled jobs need nothing; a failure still shows")
+check(AgentPill.make([(ra, .running, true), (rb, .running, true)])?.runID == rb, "the newest working job")
+check(AgentRunState.running.isRunning && AgentRunState.draft(kcal: 1).isFinished && AgentRunState.cancelled.isFinished, "run states")
+
 // MARK: AI logging: draft editing math (mirrors the server's rescale_entry)
 
 if let d = draft {
@@ -972,10 +1066,23 @@ if let original = cameraJPEG() {
         check((top?.r ?? 0) > 200 && (top?.b ?? 255) < 60 && (bottom?.b ?? 0) > 200 && (bottom?.r ?? 255) < 60,
               "pixels are rotated upright: top \(String(describing: top)), bottom \(String(describing: bottom))")
         check(prepared.count < original.count && prepared.count < AgentImage.maxBytes, "smaller, and under the server's 1.5 MB")
+        check(prepared.count <= AgentImage.targetBytes, "near the 150 to 250 KB target: \(prepared.count / 1024) KB")
         check(AgentImage.prepare(prepared).flatMap(AgentImage.pixelSize)?.height == 1024, "preparing twice keeps the size")
     }
 } else { check(false, "make the fixture photo") }
 check(AgentImage.prepare(Data("not an image".utf8)) == nil, "not an image")
+// A busy photo (noise) over the target is encoded again lower, and still fits the server's limit.
+var noise = [UInt8](repeating: 0, count: 1024 * 768 * 4)
+var seed: UInt32 = 7
+for i in noise.indices { seed = seed &* 1_664_525 &+ 1_013_904_223; noise[i] = UInt8(truncatingIfNeeded: seed >> 24) }
+if let provider = CGDataProvider(data: Data(noise) as CFData),
+   let busy = CGImage(width: 1024, height: 768, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 1024 * 4,
+                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+   let first = AgentImage.encodeJPEG(busy, quality: AgentImage.quality), let small = AgentImage.prepare(image: busy) {
+    check(first.count > AgentImage.targetBytes && small.count < first.count && small.count <= AgentImage.maxBytes,
+          "a busy photo steps down from \(first.count / 1024) KB to \(small.count / 1024) KB")
+} else { check(false, "make the busy photo") }
 check(AgentImage.barcodeDigits(["0049000028911", " 5000112637922 ", "https://x.y", "12345", "0049000028911", "ABC123456", "123456789012345"])
       == ["0049000028911", "5000112637922"], "barcode digits: 6 to 14 digits, deduped")
 

@@ -19,6 +19,30 @@ enum AgentProvider: String, CaseIterable, Identifiable, Sendable {
     var title: String { self == .openRouter ? "OpenRouter" : "Custom" }
 }
 
+/// How hard the model thinks (`reasoning_effort`): faster is cheaper and usually accurate enough for meals.
+enum AgentEffort: String, CaseIterable, Identifiable, Sendable, Codable {
+    case none, low, medium, high
+    var id: String { rawValue }
+    /// The server's default.
+    static let standard = AgentEffort.low
+
+    /// Settings → AI logging → Speed.
+    var title: String {
+        switch self {
+        case .none: "Fastest"
+        case .low: "Fast"
+        case .medium: "Balanced"
+        case .high: "Thorough"
+        }
+    }
+
+    /// Lenient: "minimal" (some providers' name for the lowest level) is Fastest; anything else unknown is nil.
+    init?(wire: String?) {
+        guard let raw = wire?.trimmingCharacters(in: .whitespaces).lowercased(), !raw.isEmpty else { return nil }
+        if let e = AgentEffort(rawValue: raw) { self = e } else if raw == "minimal" || raw == "off" { self = .none } else { return nil }
+    }
+}
+
 /// One period of `usage` in the config ("today" or "month"), or a job's usage.
 struct AgentUsage: Codable, Hashable, Sendable {
     var jobs: Int = 0
@@ -60,6 +84,10 @@ struct AgentConfig: Codable, Hashable, Sendable {
     var systemPrompt: String?
     /// The server's built-in instructions.
     var defaultSystemPrompt: String?
+    /// `reasoning_effort`; nil when the server doesn't send it (an older server, which has no setting).
+    var reasoningEffort: AgentEffort?
+    /// `verify_matches`: a second pass that checks the matches; nil from an older server.
+    var verifyMatches: Bool?
 
     static let promptLimit = 32 * 1024
 
@@ -78,6 +106,8 @@ struct AgentConfig: Codable, Hashable, Sendable {
         month = usage?.month ?? AgentUsage()
         systemPrompt = r.string("system_prompt").flatMap { $0.isEmpty ? nil : $0 }
         defaultSystemPrompt = r.string("default_system_prompt")
+        reasoningEffort = AgentEffort(wire: r.string("reasoning_effort"))
+        verifyMatches = r.bool("verify_matches")
     }
     func encode(to encoder: Encoder) throws {
         var w = RowWriter(encoder)
@@ -86,6 +116,8 @@ struct AgentConfig: Codable, Hashable, Sendable {
         try w.put("usage", ["today": today, "month": month])
         try w.putOrNull("system_prompt", systemPrompt)
         try w.put("default_system_prompt", defaultSystemPrompt)
+        try w.put("reasoning_effort", reasoningEffort?.rawValue)
+        try w.put("verify_matches", verifyMatches)
     }
 
     var provider: AgentProvider { AgentProvider(baseURL: baseURL) }
@@ -100,6 +132,10 @@ struct AgentConfig: Codable, Hashable, Sendable {
     /// What the agent runs with: the user's instructions, else the built-in ones.
     var effectivePrompt: String { systemPrompt ?? defaultSystemPrompt ?? "" }
     var usesDefaultPrompt: Bool { systemPrompt == nil }
+    /// The speed the server runs with (its default when it doesn't say).
+    var effort: AgentEffort { reasoningEffort ?? .standard }
+    /// The server knows the speed settings (it sent at least one of them).
+    var hasSpeedSettings: Bool { reasoningEffort != nil || verifyMatches != nil }
 }
 
 /// The body of `PUT /v1/agent/config`: only the fields being changed.
@@ -112,11 +148,14 @@ struct AgentConfigChange: Sendable {
     var maxJobsPerDay: Int?
     /// .some(nil) or .some("") resets to the default instructions.
     var systemPrompt: String??
+    var reasoningEffort: AgentEffort?
+    var verifyMatches: Bool?
 
     init(baseURL: String? = nil, model: String? = nil, apiKey: String? = nil, autoLog: Bool? = nil,
-         maxJobsPerDay: Int? = nil, systemPrompt: String?? = nil) {
+         maxJobsPerDay: Int? = nil, systemPrompt: String?? = nil, reasoningEffort: AgentEffort? = nil, verifyMatches: Bool? = nil) {
         self.baseURL = baseURL; self.model = model; self.apiKey = apiKey; self.autoLog = autoLog
         self.maxJobsPerDay = maxJobsPerDay; self.systemPrompt = systemPrompt
+        self.reasoningEffort = reasoningEffort; self.verifyMatches = verifyMatches
     }
 
     var json: [String: JSONValue] {
@@ -129,6 +168,8 @@ struct AgentConfigChange: Sendable {
         if let prompt = systemPrompt {
             o["system_prompt"] = prompt.flatMap { $0.isEmpty ? nil : JSONValue.string($0) } ?? .null
         }
+        if let reasoningEffort { o["reasoning_effort"] = .string(reasoningEffort.rawValue) }
+        if let verifyMatches { o["verify_matches"] = .bool(verifyMatches) }
         return o
     }
     func body() throws -> Data { try JSONEncoder().encode(JSONValue.object(json)) }
@@ -198,6 +239,8 @@ struct AgentTestResult: Decodable, Hashable, Sendable {
 struct AgentJobInput: Sendable {
     /// A re-encoded JPEG (AgentImage.prepare), never the original photo.
     var image: Data?
+    /// `image` as base64, made while the photo was prepared, so Send doesn't wait for it.
+    var imageBase64: String?
     var text: String?
     var barcodes: [String] = []
     var meal: Meal
@@ -211,7 +254,7 @@ struct AgentJobInput: Sendable {
 
     func body() throws -> Data {
         var o: [String: JSONValue] = ["meal": .string(meal.rawValue), "date": .string(day)]
-        if let image { o["image"] = .string(image.base64EncodedString()) }
+        if let image { o["image"] = .string(imageBase64 ?? image.base64EncodedString()) }
         if let t = trimmedText { o["text"] = .string(t) }
         if !barcodes.isEmpty { o["barcodes"] = .array(barcodes.map(JSONValue.string)) }
         return try JSONEncoder().encode(JSONValue.object(o))
@@ -230,7 +273,16 @@ struct AgentJobCreated: Decodable, Sendable {
 }
 
 enum AgentJobStatus: String, Sendable {
-    case running, draft, logged, failed
+    case running, draft, logged, failed, cancelled
+
+    /// Lenient: "canceled" is cancelled and "error" failed; anything else unknown is still running.
+    init(wire: String?) {
+        switch wire?.lowercased() ?? "running" {
+        case "canceled", "cancelled": self = .cancelled
+        case "error": self = .failed
+        case let raw: self = AgentJobStatus(rawValue: raw) ?? .running
+        }
+    }
 }
 
 /// The meal a job proposes: batch items (as for `food log --json`), the entries they'd make, and a line.
@@ -349,16 +401,17 @@ struct AgentJob: Decodable, Sendable {
     var meal: Meal?
     var date: String?
     var createdAt: Int?
+    /// How long the job has run on the server (ms), to correct the phone's timer.
+    var elapsedMs: Int?
 
     init(status: AgentJobStatus, step: String? = nil, draft: AgentDraft? = nil, error: String? = nil,
-         usage: AgentUsage? = nil, entries: [Entry] = []) {
+         usage: AgentUsage? = nil, entries: [Entry] = [], elapsedMs: Int? = nil) {
         self.status = status; self.step = step; self.draft = draft; self.error = error; self.usage = usage
-        self.entries = entries
+        self.entries = entries; self.elapsedMs = elapsedMs
     }
     init(from decoder: Decoder) throws {
         let r = try RowReader(decoder)
-        let raw = r.string("status") ?? "running"
-        status = AgentJobStatus(rawValue: raw) ?? (raw == "error" ? .failed : .running)
+        status = AgentJobStatus(wire: r.string("status"))
         step = r.string("step").flatMap { $0.isEmpty ? nil : $0 }
         draft = r.value("draft")
         error = r.string("error")
@@ -367,6 +420,7 @@ struct AgentJob: Decodable, Sendable {
         meal = r.string("meal").flatMap(Meal.init(rawValue:))
         date = r.string("date")
         createdAt = r.int("created_at")
+        elapsedMs = r.int("elapsed_ms").flatMap { $0 >= 0 ? $0 : nil }
         if let list = r.value("entries", as: [Entry].self) {
             entries = list
         } else if let logged = r.value("logged", as: [LoggedItem].self) {

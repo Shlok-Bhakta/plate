@@ -3,7 +3,7 @@
 // the log changes (hand logs, and agent logs arriving through sync), on foreground, from a BGAppRefreshTask,
 // and when a HealthKit background wake launches the app. Tapping a reminder opens the Add sheet for that
 // meal; its "Same as yesterday" action logs yesterday's meal in the background and shows the undo toast
-// on the next open.
+// on the next open. AI log notifications (AgentCenter, category `plate.agent`) share the delegate.
 import BackgroundTasks
 import SwiftUI
 import UIKit
@@ -71,6 +71,7 @@ final class Reminders {
             UNNotificationCategory(identifier: Self.mealCategory, actions: [], intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.mealAgainCategory, actions: [same], intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.summaryCategory, actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: AgentCenter.category, actions: [], intentIdentifiers: []),
         ])
         Self.registerBackgroundRefresh()
         store.onLogChange = { [weak self] in self?.reschedule() }
@@ -307,6 +308,11 @@ final class Reminders {
 final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // An AI log that finished behind a sheet: always show it.
+        if notification.request.content.categoryIdentifier == AgentCenter.category {
+            completionHandler([.banner, .list, .sound])
+            return
+        }
         let (day, meal) = Self.target(notification.request.content.userInfo)
         let test = notification.request.identifier.hasPrefix("plate.test.")
         Task { @MainActor in
@@ -317,6 +323,15 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, @u
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.content.categoryIdentifier == AgentCenter.category {
+            let info = response.notification.request.content.userInfo
+            let id = info[AgentCenter.runKey] as? String
+            Task { @MainActor in
+                if let id { AgentCenter.shared.openNotification([AgentCenter.runKey: id]) }
+                completionHandler()
+            }
+            return
+        }
         let (day, meal) = Self.target(response.notification.request.content.userInfo)
         let action = response.actionIdentifier
         Task { @MainActor in

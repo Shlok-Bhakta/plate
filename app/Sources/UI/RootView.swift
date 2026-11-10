@@ -121,6 +121,7 @@ struct RootView: View {
             if now == .active { router.rollDayIfNeeded() }
             store.setActive(now == .active)
             if now == .active { Reminders.shared.becameActive() }
+            if now == .active { AgentCenter.shared.becameActive() } else if now == .background { AgentCenter.shared.enteredBackground() }
         }
         .onChange(of: phase) { _, now in
             // Apple Health: opening the app always syncs, as in the Personal Health app. It's a no-op
@@ -170,7 +171,8 @@ private struct QuickLogAccessory: ViewModifier {
     }
 }
 
-/// DESIGN 3 "Quick Log bar": (+) Log lunch / 1,110 kcal left, barcode, water.
+/// DESIGN 3 "Quick Log bar": (+) Log lunch / 1,110 kcal left, camera, barcode, water. While an AI log runs
+/// behind its sheet, the camera button becomes the Working pill (AgentWorkingPill), which reopens it.
 struct QuickLogBar: View {
     @Environment(Store.self) private var store
     @Environment(Router.self) private var router
@@ -179,6 +181,7 @@ struct QuickLogBar: View {
     @Environment(\.units) private var units
     @Environment(\.agentLauncher) private var agent
     @State private var drops = 0
+    @State private var agentCenter = AgentCenter.shared
 
     private var expanded: Bool { placement != .inline }
     private var meal: Meal { router.logMeal }
@@ -219,14 +222,23 @@ struct QuickLogBar: View {
             .contextMenu { longPressMenu }
             .accessibilityLabel("\(title), \(subtitle)")
 
+            if !expanded, let pill = agentCenter.pill {
+                AgentWorkingPill(pill: pill, compact: true)
+            }
+
             if expanded {
-                Button { agent?(AgentCaptureRequest(meal: meal, day: router.day)) } label: {
-                    Image(systemName: "camera.fill").font(.system(size: 17, weight: .medium))
-                        .frame(width: 36, height: 36).contentShape(Circle())
+                if let pill = agentCenter.pill {
+                    AgentWorkingPill(pill: pill)
+                        .padding(.horizontal, 2)
+                } else {
+                    Button { agent?(AgentCaptureRequest(meal: meal, day: router.day)) } label: {
+                        Image(systemName: "camera.fill").font(.system(size: 17, weight: .medium))
+                            .frame(width: 36, height: 36).contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Snap a meal")
+                    .accessibilityHint("Logs a meal from a photo with AI")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Snap a meal")
-                .accessibilityHint("Logs a meal from a photo with AI")
 
                 Button { router.openAdd(meal: meal, day: router.day, start: .scanner) } label: {
                     Image(systemName: "barcode.viewfinder").font(.system(size: 19, weight: .medium))
@@ -253,6 +265,7 @@ struct QuickLogBar: View {
         }
         .padding(.leading, 8)
         .padding(.trailing, expanded ? 8 : 14)
+        .animation(Motion.smooth, value: agentCenter.pill)
         .zoomSource("quicklog", zoom)
     }
 

@@ -1,5 +1,6 @@
-// The AI log sheet. While the job runs: the photo with a slow glowing ring and the live steps from the
-// long-poll, and Cancel (which deletes the job). Then the draft: entry rows (as on Today) with kcal and
+// The AI log sheet. While the job runs: the photo with a slow glowing ring, the live steps from the
+// long-poll with an elapsed timer beside the current one, Hide (or a swipe down: the job keeps running
+// and AgentCenter shows the result) and Cancel (which deletes the job, asking first past 10 s). Then the draft: entry rows (as on Today) with kcal and
 // protein, the total, the agent's summary, one big "Log meal". A row opens the amount editor (the Entry
 // edit steppers) or removes the item. Errors say what to do, and keep the photo for Try again.
 import SwiftUI
@@ -20,7 +21,7 @@ struct AgentJobSheet: View {
             Group {
                 switch run.phase {
                 case .sending, .running:
-                    AgentProgressView(run: run, cancel: { run.cancel(); close() })
+                    AgentProgressView(run: run, hide: close, cancel: { run.cancel(); close() })
                 case .draft, .logging:
                     AgentDraftView(run: run, editing: $editing, discard: { run.cancel(); close() })
                 case .failed(let f):
@@ -34,8 +35,9 @@ struct AgentJobSheet: View {
         }
         .animation(Motion.smooth, value: run.phase)
         .presentationDetents([.medium, Self.errorDetent, .large], selection: $detent)
-        .presentationDragIndicator(run.phase == .draft ? .visible : .hidden)
-        .interactiveDismissDisabled(run.phase == .sending || run.phase == .running || run.phase == .logging)
+        .presentationDragIndicator(run.phase == .draft || run.phase == .sending || run.phase == .running ? .visible : .hidden)
+        // Swiping away never cancels (the run is hidden and keeps going), except mid-confirm.
+        .interactiveDismissDisabled(run.phase == .logging)
         .sheet(item: $editing) { row in
             DraftItemEditor(run: run, index: row.id)
         }
@@ -54,7 +56,10 @@ struct AgentJobSheet: View {
 
 private struct AgentProgressView: View {
     var run: AgentRun
+    var hide: () -> Void
     var cancel: () -> Void
+    @State private var confirmCancel = false
+    @State private var reminders = Reminders.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,29 +67,52 @@ private struct AgentProgressView: View {
             ThinkingThumbnail(image: run.thumbnail, text: run.input.trimmedText)
                 .padding(.bottom, 26)
             TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
-                let elapsed = context.date.timeIntervalSince(run.startedAt)
+                let now = context.date
                 VStack(spacing: 10) {
-                    StepList(steps: shownSteps)
-                    Text(hint(elapsed))
-                        .font(.footnote).foregroundStyle(.tertiary)
+                    StepList(steps: shownSteps, elapsed: run.clock.label(at: now), seconds: run.clock.seconds(at: now))
+                    Text(hint(slow: run.clock.isSlow(at: now)))
+                        .font(.footnote).foregroundStyle(run.clock.isSlow(at: now) ? .secondary : .tertiary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 300)
                         .contentTransition(.opacity)
+                        .animation(Motion.smooth, value: run.clock.isSlow(at: now))
                         .padding(.top, 4)
                 }
             }
             Spacer(minLength: 12)
-            Button(action: cancel) {
-                Text("Cancel").font(.body.weight(.semibold)).frame(maxWidth: 220, minHeight: 30)
+            HStack(spacing: 12) {
+                Button {
+                    if run.clock.confirmsCancel(at: Date()) { confirmCancel = true } else { cancel() }
+                } label: {
+                    Text("Cancel").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.bordered)
+                .tint(.secondary)
+                Button(action: hide) {
+                    Label("Hide", systemImage: "chevron.down")
+                        .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.bordered)
+                .tint(Palette.accentInk)
+                .accessibilityHint("Keeps working in the background")
             }
-            .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
             .controlSize(.large)
-            .tint(.secondary)
+            .frame(maxWidth: 340)
             .padding(.bottom, 12)
         }
         .padding(.horizontal, Space.xl)
         .frame(maxWidth: .infinity)
         .background(Palette.background)
         .accessibilityElement(children: .contain)
+        .confirmationDialog("Stop this AI log?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Stop and discard", role: .destructive, action: cancel)
+            Button("Hide instead", action: hide)
+            Button("Keep waiting", role: .cancel) {}
+        } message: {
+            Text("It's been working for \(run.clock.label(at: Date())). Hide keeps it going while you use Plate.")
+        }
     }
 
     /// The last three steps; before the first one arrives, "Sending your photo".
@@ -94,12 +122,11 @@ private struct AgentProgressView: View {
         return Array(all.suffix(3))
     }
 
-    private func hint(_ elapsed: TimeInterval) -> String {
-        switch elapsed {
-        case ..<25: "Usually 10 to 20 seconds"
-        case ..<60: "Still working. Busy models can take a minute."
-        default: "Taking a while. You can cancel and try again."
-        }
+    private func hint(slow: Bool) -> String {
+        guard slow else { return "Usually 10 to 20 seconds" }
+        return reminders.isAllowed
+            ? "Taking longer than usual. You can keep using Plate; we'll notify you when it's ready."
+            : "Taking longer than usual. You can hide this and keep using Plate; it keeps working."
     }
 }
 
@@ -154,9 +181,12 @@ private struct ThinkingThumbnail: View {
     }
 }
 
-/// Finished steps get a quiet check; the current one a small spinner.
+/// Finished steps get a quiet check; the current one a small spinner and the elapsed time.
 private struct StepList: View {
     var steps: [String]
+    /// "12 s", beside the current step.
+    var elapsed: String
+    var seconds: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -177,14 +207,24 @@ private struct StepList: View {
                         .font(current ? .body.weight(.semibold) : .subheadline)
                         .foregroundStyle(current ? .primary : .secondary)
                         .lineLimit(1)
+                    if current {
+                        Spacer(minLength: 8)
+                        Text(elapsed)
+                            .font(.subheadline.weight(.medium))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .contentTransition(.numericText(countsDown: false))
+                            .animation(.snappy, value: seconds)
+                            .fixedSize()
+                    }
                 }
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
             }
         }
-        .frame(maxWidth: 300, alignment: .leading)
+        .frame(maxWidth: 320, alignment: .leading)
         .animation(.smooth(duration: 0.5), value: steps)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(steps.last ?? "Working")
+        .accessibilityLabel("\(steps.last ?? "Working"), \(elapsed)")
     }
 }
 

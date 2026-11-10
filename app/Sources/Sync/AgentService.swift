@@ -5,7 +5,8 @@
 // Persisted: UserDefaults `agent.config` (AgentConfig JSON: has_key and key_hint only, never the key).
 // Debug: -PlateAgent unconfigured (demo starts without a key), -PlateAgentError <kind> (demo jobs fail
 // with noKey, invalidKey, outOfCredit, unknownModel, timeout, offline, dailyLimit, busy or server),
-// -PlateAgentAutoLog YES (demo auto-logs).
+// -PlateAgentAutoLog YES (demo auto-logs), -PlateAgentSlow YES|<seconds> (demo jobs take 45 s, or that long,
+// to see the timer, the taking-longer line and the Working pill).
 import Foundation
 import Observation
 
@@ -28,6 +29,7 @@ final class AgentService {
         if Store.shared.isDemo {
             var c = DemoAgent.config(configured: UserDefaults.standard.string(forKey: "PlateAgent") != "unconfigured")
             if UserDefaults.standard.bool(forKey: "PlateAgentAutoLog") { c.autoLog = true }
+            if let e = AgentEffort(wire: UserDefaults.standard.string(forKey: "PlateAgentEffort")) { c.reasoningEffort = e }
             config = c
         } else if let data = UserDefaults.standard.data(forKey: Self.cacheKey),
                   let cached = try? JSONDecoder().decode(AgentConfig.self, from: data) {
@@ -95,6 +97,8 @@ final class AgentService {
             if let a = change.autoLog { c.autoLog = a }
             if let n = change.maxJobsPerDay { c.maxJobsPerDay = n }
             if let p = change.systemPrompt { c.systemPrompt = p.flatMap { $0.isEmpty ? nil : $0 } }
+            if let e = change.reasoningEffort { c.reasoningEffort = e }
+            if let v = change.verifyMatches { c.verifyMatches = v }
             remember(c)
             return c
         }
@@ -160,6 +164,7 @@ final class AgentService {
         return try await wrap { try await self.api().confirmAgentJob(id, items: items).entries }
     }
 
+    /// DELETE: the server stops the job (its status becomes `cancelled`).
     func cancel(_ id: String) async {
         if store.isDemo { demoJobs[id] = nil; return }
         await store.api?.cancelAgentJob(id)
@@ -177,19 +182,35 @@ final class AgentService {
         var started: Date
     }
 
+    /// `-PlateAgentSlow YES` (45 s) or a number of seconds: how long a demo job runs.
+    static var demoDuration: TimeInterval? {
+        guard let raw = UserDefaults.standard.string(forKey: "PlateAgentSlow") else { return nil }
+        if let n = Double(raw), n > 0 { return n }
+        return ["yes", "true", "1"].contains(raw.lowercased()) ? 45 : nil
+    }
+
     static var debugError: AgentFailure.Kind? {
         UserDefaults.standard.string(forKey: "PlateAgentError").flatMap(AgentFailure.Kind.init(rawValue:))
     }
 
     private func demoPoll(_ id: String) async throws -> AgentJob {
-        guard let job = demoJobs[id] else { throw AgentFailure(.server, detail: "This job has expired") }
+        guard let job = demoJobs[id] else { return AgentJob(status: .cancelled) }
         let steps = job.input.image == nil ? DemoAgent.textSteps : DemoAgent.steps
         let hold = UserDefaults.standard.bool(forKey: "PlateAgentHold")
-        try await Task.sleep(for: .milliseconds(450))
+        let duration = Self.demoDuration ?? Double(steps.count) * 0.45
+        // A slow job answers like a long-poll: when the step changes, or after a few seconds.
+        let per = duration / Double(steps.count)
+        let before = Date().timeIntervalSince(job.started)
+        let wait = min(max(0.45, per - before.truncatingRemainder(dividingBy: per)), 5)
+        try await Task.sleep(for: .seconds(wait))
+        guard demoJobs[id] != nil else { return AgentJob(status: .cancelled) }
         let elapsed = Date().timeIntervalSince(job.started)
-        let index = Int(elapsed / 0.45)
+        let ms = Int(elapsed * 1000)
+        let index = Int(elapsed / per)
         if hold || index < steps.count {
-            return AgentJob(status: .running, step: steps[hold ? min(index, 2) : index])
+            var j = AgentJob(status: .running, step: steps[hold ? min(index, 2) : index])
+            j.elapsedMs = ms
+            return j
         }
         if let kind = Self.debugError {
             demoJobs[id] = nil
@@ -205,8 +226,8 @@ final class AgentService {
                 e.id = UUID().uuidString.lowercased()
                 return e
             }
-            return AgentJob(status: .logged, draft: draft, usage: usage, entries: entries)
+            return AgentJob(status: .logged, draft: draft, usage: usage, entries: entries, elapsedMs: ms)
         }
-        return AgentJob(status: .draft, draft: draft, usage: usage)
+        return AgentJob(status: .draft, draft: draft, usage: usage, elapsedMs: ms)
     }
 }

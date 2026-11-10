@@ -1,5 +1,5 @@
 // Meal photos for AI logging, prepared on the phone: scaled to a 1024 px long edge, upright, and
-// re-encoded as a fresh JPEG (about quality 0.75) with no metadata, so no EXIF, GPS, maker notes or
+// re-encoded as a fresh JPEG (quality 0.7, about 150 to 250 KB) with no metadata, so no EXIF, GPS, maker notes or
 // thumbnails leave the phone. Also the digit filter for barcodes Vision finds in the photo.
 // ImageIO and CoreGraphics only (both on macOS too), so the logic tests run these on the Mac.
 import CoreGraphics
@@ -9,7 +9,11 @@ import UniformTypeIdentifiers
 
 enum AgentImage {
     static let maxEdge = 1024
-    static let quality = 0.75
+    /// 1024 px at 0.7 is usually 150 to 250 KB: plenty for a model to read a plate, and quick to send.
+    static let quality = 0.7
+    /// A busy photo past this is encoded again a little lower (down to `floorQuality`), to keep uploads small.
+    static let targetBytes = 300_000
+    static let floorQuality = 0.5
     /// The server takes at most 1.5 MB decoded.
     static let maxBytes = 1_500_000
 
@@ -62,8 +66,8 @@ enum AgentImage {
         }
         var q = quality
         while let jpeg = encodeJPEG(image, quality: q) {
-            if jpeg.count <= maxBytes || q <= 0.3 { return jpeg }
-            q -= 0.15
+            if jpeg.count <= targetBytes || (q <= floorQuality + 0.001 && jpeg.count <= maxBytes) || q <= 0.3 { return jpeg }
+            q -= q > floorQuality + 0.001 ? 0.1 : 0.15
         }
         return nil
     }

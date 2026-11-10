@@ -1,23 +1,45 @@
-// Turns a shot or a picked photo into what a job sends: the 1024 px metadata-free JPEG (AgentImage) and
-// the product barcodes Vision reads in it, off the main thread. Also the demo "photo" for `-PlateDemo`.
+// Turns a shot or a picked photo into what a job sends: the 1024 px metadata-free JPEG (AgentImage), already
+// base64-encoded, and the product barcodes Vision reads in it, off the main thread. It starts the moment the
+// shutter is pressed (CaptureView), so by Send, while a note was typed, the upload is ready. One log line
+// says how long it took and how big it is. Also the demo "photo" for `-PlateDemo`.
 import SwiftUI
 import UIKit
 import Vision
 
 struct PreparedPhoto: Sendable {
     var jpeg: Data
+    /// `jpeg` as base64, for the job body.
+    var base64: String
     var barcodes: [String]
 }
 
 enum PhotoPrep {
-    /// nil when the data isn't an image ImageIO can read.
+    /// nil when the data isn't an image ImageIO can read. The JPEG and the barcode scan run side by side.
     static func prepare(_ data: Data) async -> PreparedPhoto? {
-        await Task.detached(priority: .userInitiated) {
+        let started = Date()
+        async let encoded: (jpeg: Data, base64: String, ms: Int)? = Task.detached(priority: .userInitiated) {
+            let t = Date()
             guard let jpeg = AgentImage.prepare(data) else { return nil }
-            // Barcodes read better from more pixels than the upload keeps.
-            let big = AgentImage.uprightImage(data, maxEdge: 2048)
-            return PreparedPhoto(jpeg: jpeg, barcodes: big.map(barcodes) ?? [])
+            let base64 = jpeg.base64EncodedString()
+            return (jpeg, base64, Int(Date().timeIntervalSince(t) * 1000))
         }.value
+        async let codes: [String] = Task.detached(priority: .utility) {
+            // Barcodes read better from more pixels than the upload keeps.
+            AgentImage.uprightImage(data, maxEdge: 2048).map(barcodes) ?? []
+        }.value
+        guard let e = await encoded else { return nil }
+        let found = await codes
+        let size = AgentImage.pixelSize(e.jpeg).map { "\($0.width)×\($0.height)" } ?? "?"
+        print("Plate: photo encoded in \(e.ms) ms: \(size), \(e.jpeg.count / 1024) KB JPEG, \(e.base64.utf8.count / 1024) KB base64; "
+              + "ready to send after \(Int(Date().timeIntervalSince(started) * 1000)) ms with \(found.count) barcode(s)")
+        return PreparedPhoto(jpeg: e.jpeg, base64: e.base64, barcodes: found)
+    }
+
+    /// The job input with this photo attached (the JPEG, its base64 and the barcodes).
+    static func input(_ p: PreparedPhoto, note: String?, meal: Meal, day: String) -> AgentJobInput {
+        var i = AgentJobInput(image: p.jpeg, text: note, barcodes: p.barcodes, meal: meal, day: day)
+        i.imageBase64 = p.base64
+        return i
     }
 
     /// Digits of the product barcodes in the image (EAN, UPC, Code 128, ITF-14), for `barcodes`.

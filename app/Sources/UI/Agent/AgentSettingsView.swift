@@ -1,6 +1,6 @@
 // Settings → AI logging: provider (OpenRouter or any OpenAI-compatible server), the API key (sent to the
-// server once, never kept here), the model, the agent's instructions, a connection test, auto-log, and
-// usage. Everything is stored on the Plate server; this phone only caches has_key and key_hint.
+// server once, never kept here), the model, the agent's instructions, speed (`reasoning_effort` and
+// `verify_matches`), a connection test, auto-log, and usage. Everything is stored on the Plate server; this phone only caches has_key and key_hint.
 import SwiftUI
 
 struct AgentSettingsView: View {
@@ -26,6 +26,17 @@ struct AgentSettingsView: View {
     private var config: AgentConfig? { service.config }
 
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                .task {
+                    guard UserDefaults.standard.string(forKey: "PlateScreen") == "agentspeed" else { return }
+                    try? await Task.sleep(for: .milliseconds(700))
+                    withAnimation { proxy.scrollTo("speed", anchor: .center) }
+                }
+        }
+    }
+
+    private var form: some View {
         Form {
             if intro {
                 Section {
@@ -46,6 +57,7 @@ struct AgentSettingsView: View {
                 providerSection(config)
                 keySection(config)
                 modelSection(config)
+                speedSection(config)
                 testSection(config)
                 autoLogSection(config)
                 usageSection(config)
@@ -231,6 +243,48 @@ struct AgentSettingsView: View {
             Text(c.provider == .openRouter
                  ? "Only models that accept images and tools are shown. Cheaper models work well for most meals."
                  : "Use a model that accepts images and tool calls.")
+        }
+    }
+
+    /// Speed: how hard the model thinks, and the optional second pass. An older server ignores both fields
+    /// (its reply leaves them out), so the control shows the server's default and says why.
+    @ViewBuilder private func speedSection(_ c: AgentConfig) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Speed", selection: Binding(get: { c.effort }, set: { e in
+                    guard e != c.effort else { return }
+                    Haptics.selection()
+                    save("speed", AgentConfigChange(reasoningEffort: e))
+                })) {
+                    ForEach(AgentEffort.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Faster is cheaper and usually accurate enough for meals.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if saving == "speed" { ProgressView().controlSize(.small) }
+                }
+            }
+            .padding(.vertical, 4)
+            .id("speed")
+            Toggle(isOn: Binding(get: { c.verifyMatches ?? false }, set: { on in
+                save("verify", AgentConfigChange(verifyMatches: on))
+            })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Double-check matches")
+                    Text("Adds a second pass, about 5–15 s slower").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .tint(Palette.accent)
+        } header: {
+            Text("Speed")
+        } footer: {
+            if !c.hasSpeedSettings {
+                Text("Your server doesn't offer these yet; it uses its own speed until it's updated.")
+            }
         }
     }
 

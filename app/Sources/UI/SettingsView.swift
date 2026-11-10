@@ -56,7 +56,7 @@ struct SettingsView: View {
                 case "mealsplit": showSplit = true
                 case "limits": showLimits = true
                 case "healthlog": showHealthActivity = true
-                case "agentsettings", "agentinstructions", "agentmodels": showAgent = true
+                case "agentsettings", "agentinstructions", "agentmodels", "agentspeed": showAgent = true
                 case let target? where ["goals", "basis", "appicon", "units", "reminders", "about", "health"].contains(target):
                     try? await Task.sleep(for: .milliseconds(500))
                     proxy.scrollTo(target, anchor: ["health", "units", "appicon"].contains(target) ? .center : .top)

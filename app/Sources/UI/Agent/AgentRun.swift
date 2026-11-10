@@ -2,6 +2,10 @@
 // review (or, with auto-log, straight to the undo toast), confirm, or a friendly error. The photo stays in
 // memory until the run ends, so a retry never needs another shot. A transient poll failure retries the
 // same job quietly before saying anything.
+//
+// A run lives in AgentCenter, not in its sheet: swiping the sheet away (or Hide) keeps it polling, and
+// AgentCenter decides what to show when it finishes (the sheet again, a notification, the undo toast).
+// Only Cancel, Discard and Close end it; Cancel deletes the job on the server.
 import Observation
 import SwiftUI
 import UIKit
@@ -31,6 +35,12 @@ final class AgentRun: Identifiable {
     /// The draft as the agent proposed it; confirm sends items only when they differ.
     private(set) var original: AgentDraft?
     private(set) var startedAt = Date()
+    /// The elapsed time the sheet and the pill show: from Send, corrected by the server's `elapsed_ms`.
+    private(set) var clock = AgentClock()
+    /// Swiped away or hidden: it keeps running and AgentCenter shows the result.
+    var isHidden = false
+    /// The server reported the job cancelled (from another device, or a DELETE that raced a poll).
+    private(set) var cancelledRemotely = false
     /// Set when the run logged entries (the sheet closes and the toast shows).
     private(set) var logged: [Entry] = []
     /// Auto-log was on but its confirm failed: the draft is shown with this reason.
@@ -51,6 +61,18 @@ final class AgentRun: Identifiable {
     var meal: Meal { draft?.preview.first?.meal ?? input.meal }
     var isEdited: Bool { draft != original }
 
+    /// Where the run stands, for AgentCenter and the pill.
+    var state: AgentRunState {
+        switch phase {
+        case .sending, .running: return .running
+        case .draft, .logging: return .draft(kcal: draft?.kcal ?? 0)
+        case .failed(let f): return confirmFailed ? .draft(kcal: draft?.kcal ?? 0) : .failed(f.title)
+        case .done:
+            if !logged.isEmpty { return .logged(kcal: logged.compactMap(\.kcal).reduce(0, +)) }
+            return cancelledRemotely ? .cancelled : .done
+        }
+    }
+
     // MARK: Running
 
     func start() {
@@ -59,6 +81,8 @@ final class AgentRun: Identifiable {
         step = nil
         steps = []
         startedAt = Date()
+        clock = AgentClock(start: startedAt)
+        AgentCenter.shared.track(self)
         task = Task { [weak self] in await self?.run(resume: false) }
     }
 
@@ -68,17 +92,19 @@ final class AgentRun: Identifiable {
         task?.cancel()
         let resume = jobID != nil
         phase = resume ? .running : .sending
-        if !resume { steps = []; step = nil; startedAt = Date() }
+        if !resume { steps = []; step = nil; startedAt = Date(); clock = AgentClock(start: startedAt) }
+        AgentCenter.shared.track(self)
         task = Task { [weak self] in await self?.run(resume: resume) }
     }
 
-    /// Cancel (or swipe away): stops polling and deletes the job on the server.
+    /// Cancel, Discard or Close: stops polling and deletes the job on the server (which stops it).
     func cancel() {
         task?.cancel()
         task = nil
         if let id = jobID { Task { await AgentService.shared.cancel(id) } }
         jobID = nil
         if phase != .done { phase = .done }
+        AgentCenter.shared.ended(self)
     }
 
     private func run(resume: Bool) async {
@@ -103,6 +129,7 @@ final class AgentRun: Identifiable {
                     continue
                 }
                 if Task.isCancelled { return }
+                if let ms = job.elapsedMs { clock.correct(elapsedMs: ms, at: Date()) }
                 if let s = job.step, s != step {
                     withAnimation(.smooth(duration: 0.5)) {
                         step = s
@@ -119,8 +146,9 @@ final class AgentRun: Identifiable {
                     draft = d
                     original = d
                     autoLogError = job.error
-                    Haptics.light()
+                    if !isHidden { Haptics.light() }
                     withAnimation(Motion.smooth) { phase = .draft }
+                    AgentCenter.shared.finished(self)
                     return
                 case .logged:
                     jobID = nil
@@ -129,6 +157,13 @@ final class AgentRun: Identifiable {
                 case .failed:
                     jobID = nil
                     throw AgentFailure.classify(message: job.error)
+                case .cancelled:
+                    // Stopped on the server (another device, or our own DELETE racing this poll): end quietly.
+                    jobID = nil
+                    cancelledRemotely = true
+                    withAnimation(Motion.smooth) { phase = .done }
+                    AgentCenter.shared.finished(self)
+                    return
                 }
             }
         } catch is CancellationError {
@@ -145,8 +180,9 @@ final class AgentRun: Identifiable {
         guard !Task.isCancelled else { return }
         // A job that failed on the server can't be polled again; a retry sends it again.
         if !f.canRetry || f.kind == .server { jobID = nil }
-        Haptics.warning()
+        if !isHidden { Haptics.warning() }
         withAnimation(Motion.smooth) { phase = .failed(f) }
+        AgentCenter.shared.finished(self)
     }
 
     private func finishAutoLog(_ job: AgentJob) async {
@@ -159,8 +195,10 @@ final class AgentRun: Identifiable {
         }
         if entries.isEmpty, let d = job.draft { entries = d.preview }
         logged = entries
-        Actions.agentLogged(entries)
+        // Hidden: AgentCenter shows the toast now, or a notification and the toast on the next open.
+        if !isHidden { Actions.agentLogged(entries) }
         phase = .done
+        AgentCenter.shared.finished(self)
     }
 
     // MARK: Draft
@@ -202,6 +240,7 @@ final class AgentRun: Identifiable {
                 logged = live.isEmpty ? entries : live
                 Actions.agentLogged(logged)
                 phase = .done
+                AgentCenter.shared.ended(self)
             } catch is CancellationError {
                 return
             } catch let f as AgentFailure {

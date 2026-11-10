@@ -1,7 +1,9 @@
 // Where AI logging is presented from. Each place that can start it (the root for the Quick Log bar, the
 // Add sheet, the Search tab) applies `.agentHost()`, which puts a launcher in the environment and owns the
 // presentations: the camera cover, then the job sheet (progress, draft, errors), or, when AI logging isn't
-// set up yet, Settings → AI logging in a sheet with a one-line explanation.
+// set up yet, Settings → AI logging in a sheet with a one-line explanation. Swiping the job sheet away
+// hides the run rather than ending it (AgentCenter keeps it); the root host also presents the runs
+// AgentCenter reopens (from the Working pill, a notification, or a draft that finished while hidden).
 import SwiftUI
 
 struct AgentCaptureRequest: Identifiable, Hashable {
@@ -32,7 +34,8 @@ extension View {
 }
 
 private struct AgentHost: ViewModifier {
-    /// The root host also opens the debug screens (`-PlateScreen capture | agentprogress | agentdraft | agenterror`).
+    /// The root host: it opens the debug screens (`-PlateScreen capture | agentprogress | agentdraft | agenterror |
+    /// agentworking`) and presents the runs AgentCenter reopens.
     var debug: Bool
     @Environment(Store.self) private var store
     @Environment(Router.self) private var router
@@ -61,12 +64,23 @@ private struct AgentHost: ViewModifier {
                 } onClose: { capture = nil }
             }
             .sheet(item: $run, onDismiss: {
-                // Swiped away or closed: a job still running or a draft not logged is cancelled on the server.
-                if let r = shownRun, r.phase != .done { r.cancel() }
+                // Swiped away or Hide: a job still running, or a draft not logged yet, keeps going in AgentCenter
+                // (the Working pill reopens it). A plain error has nothing to keep. Cancel, Discard and Close
+                // already ended the run.
+                if let r = shownRun {
+                    switch r.phase {
+                    case .done: break
+                    case .failed where !r.confirmFailed: r.cancel()
+                    default: AgentCenter.shared.hide(r)
+                    }
+                }
                 shownRun = nil
             }) { r in
                 AgentJobSheet(run: r) { run = nil }
-                    .onAppear { shownRun = r }
+                    .onAppear {
+                        shownRun = r
+                        AgentCenter.shared.shown(r)
+                    }
             }
             .sheet(item: $setup, onDismiss: {
                 // Set up from here: carry on to the camera (or the text job) the person asked for.
@@ -83,6 +97,12 @@ private struct AgentHost: ViewModifier {
                     AgentSettingsView(intro: true) { setup = nil }
                 }
                 .onAppear { afterSetup = request }
+            }
+            .onChange(of: AgentCenter.shared.reopen?.id) { _, id in
+                guard debug, id != nil, let r = AgentCenter.shared.reopen else { return }
+                AgentCenter.shared.reopen = nil
+                guard capture == nil, setup == nil, run !== r else { return }
+                run = r
             }
             .task {
                 guard debug else { return }
@@ -119,7 +139,8 @@ private struct AgentHost: ViewModifier {
 
     @MainActor private func openDebugScreen() async {
         let screen = UserDefaults.standard.string(forKey: "PlateScreen")
-        guard let screen, ["capture", "capturetext", "agentprogress", "agentdraft", "agenterror", "agenttext", "agentsetup"].contains(screen)
+        guard let screen, ["capture", "capturetext", "agentprogress", "agentdraft", "agenterror", "agenttext", "agentsetup",
+                           "agentworking"].contains(screen)
         else { return }
         try? await Task.sleep(for: .milliseconds(600))
         let meal = router.logMeal, day = router.day
@@ -132,13 +153,13 @@ private struct AgentHost: ViewModifier {
         case "agentdraft":
             run = AgentRun.debugDraft(meal: meal, day: day, photo: DemoPhoto.image)
         default:
-            // agentprogress (add -PlateAgentHold YES to stay on it), agenterror (with -PlateAgentError <kind>).
+            // agentprogress (add -PlateAgentHold YES to stay on it, -PlateAgentSlow YES for a slow job),
+            // agenterror (with -PlateAgentError <kind>), agentworking (a job hidden at once: the Working pill).
             let photo = DemoPhoto.image
             guard let prepared = await PhotoPrep.prepare(PhotoPrep.data(from: photo) ?? Data()) else { return }
-            let r = AgentRun(input: AgentJobInput(image: prepared.jpeg, text: nil, barcodes: prepared.barcodes, meal: meal, day: day),
-                             thumbnail: photo)
-            run = r
+            let r = AgentRun(input: PhotoPrep.input(prepared, note: nil, meal: meal, day: day), thumbnail: photo)
             r.start()
+            if screen == "agentworking" { AgentCenter.shared.hide(r) } else { run = r }
         }
     }
 }
