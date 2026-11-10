@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
 
-const SWITCHES: &[&str] = &["json", "json-out", "favorites", "off", "no-off", "help", "force", "yes", "key-stdin", "default", "set", "reset"];
+const SWITCHES: &[&str] = &["json", "json-out", "favorites", "off", "no-off", "help", "force", "yes", "key-stdin", "default", "set", "reset", "dry-run"];
 
 /// A short usage error that points at the command's help.
 fn usage(command: &str, message: impl std::fmt::Display) -> String {
@@ -28,7 +28,7 @@ fn allowed_flags(command: &str) -> Option<(&'static [&'static str], bool)> {
         "health" => (&["format", "birth-date", "sex", "height-cm"], false),
         "init" => (&["data-dir", "listen", "timezone", "encryption", "force"], false),
         "agent" => (&["base-url", "model", "key-stdin", "auto-log", "max-jobs", "photo", "text", "meal", "date", "yes", "default", "set",
-                      "reset"], false),
+                      "reset", "effort", "verify-matches", "dry-run"], false),
         "rm" | "barcode" | "recipe" | "goals" | "health-refresh" | "query" | "rotate-token" | "token" | "seed-usda" | "config"
         | "export" | "import" => (&[], false),
         _ => return None,
@@ -659,13 +659,16 @@ fn agent_command(args: &Args, json_out: bool) -> Result<(), String> {
                 std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
                 set["api_key"] = json!(line.trim());
             }
-            if let Some(on) = args.get("auto-log") {
-                set["auto_log"] = json!(match on {
-                    "on" | "true" | "yes" => true,
-                    "off" | "false" | "no" => false,
-                    other => return Err(args.usage(format!("--auto-log takes on or off, not {other:?}"))),
-                });
+            for (flag, key) in [("auto-log", "auto_log"), ("verify-matches", "verify_matches")] {
+                if let Some(on) = args.get(flag) {
+                    set[key] = json!(match on {
+                        "on" | "true" | "yes" => true,
+                        "off" | "false" | "no" => false,
+                        other => return Err(args.usage(format!("--{flag} takes on or off, not {other:?}"))),
+                    });
+                }
             }
+            if let Some(effort) = args.get("effort") { set["reasoning_effort"] = json!(effort); }
             if let Some(n) = args.get("max-jobs") {
                 set["max_jobs_per_day"] = json!(n.parse::<i64>().map_err(|_| args.usage("--max-jobs needs a whole number"))?);
             }
@@ -738,6 +741,8 @@ fn format_agent_config(c: &Value) -> String {
     let model = c["model"].as_str().filter(|m| !m.is_empty()).unwrap_or("not set (food agent models, then --model ID)");
     [("base_url", c["base_url"].as_str().unwrap_or("").to_string()), ("model", model.to_string()), ("api key", key),
      ("auto_log", if c["auto_log"] == true { "on".into() } else { "off".into() }), ("max jobs/day", c["max_jobs_per_day"].to_string()),
+     ("effort", c["reasoning_effort"].as_str().unwrap_or("low").to_string()),
+     ("verify", if c["verify_matches"] == true { "on (the model checks its matches: slower)".into() } else { "off".into() }),
      ("system prompt", prompt), ("today", usage(&c["usage"]["today"])), ("this month", usage(&c["usage"]["month"]))]
         .iter().map(|(label, value)| format!("{label:<14} {value}\n")).collect()
 }
@@ -760,9 +765,12 @@ fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
     if job.as_object().is_some_and(|o| o.is_empty()) {
         return Err(args.usage("food agent log needs --photo PATH, --text T, or both"));
     }
-    for key in ["meal", "date"] {
+    for key in ["meal", "date", "model"] {
         if let Some(v) = args.get(key) { job[key] = json!(v); }
     }
+    if let Some(effort) = args.get("effort") { job["reasoning_effort"] = json!(effort); }
+    let dry_run = args.has("dry-run");
+    if dry_run { job["dry_run"] = json!(true); }
     let id = call(json!({"cmd": "agent-job", "job": job}))?["job"].as_str().unwrap_or("").to_string();
     let mut step = String::new();
     let job = loop {
@@ -773,8 +781,10 @@ fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
         }
         if reply["status"] != "running" { break reply; }
     };
+    if !json_out { eprintln!("  {}", job_timing(&job)); }
     match job["status"].as_str() {
         Some("failed") => return Err(format!("AI logging failed: {}", job["error"].as_str().unwrap_or("no reason given"))),
+        Some("cancelled") => return Err("the job was cancelled".to_string()),
         Some("logged") => {
             if json_out { print_json(&job); return Ok(()); }
             println!("{}", job["draft"]["summary"].as_str().unwrap_or(""));
@@ -786,7 +796,7 @@ fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
         }
         _ => {}
     }
-    if json_out && !args.has("yes") { print_json(&job); return Ok(()); }
+    if json_out && (dry_run || !args.has("yes")) { print_json(&job); return Ok(()); }
     if !json_out {
         println!("{}", job["draft"]["summary"].as_str().unwrap_or(""));
         for (i, e) in job["draft"]["preview"].as_array().cloned().unwrap_or_default().iter().enumerate() {
@@ -795,6 +805,10 @@ fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
             println!("  {}{source} to {} {}", entry_text(e), e["meal"].as_str().unwrap_or(""), e["day"].as_str().unwrap_or(""));
         }
         if let Some(error) = job["error"].as_str() { println!("note: {error}"); }
+    }
+    if dry_run {
+        println!("not logged (dry run)");
+        return Ok(());
     }
     let yes = args.has("yes") || (unsafe { libc::isatty(0) } == 1 && {
         eprint!("Log this? [y/N] ");
@@ -813,6 +827,16 @@ fn agent_log(args: &Args, json_out: bool) -> Result<(), String> {
     }
     println!("{}", remaining_line(&reply["today"]));
     Ok(())
+}
+
+/// "9.8 s, 2 turns: 1) 7.9 s propose_meal(4) 2) 1.9 s text · 5,210 + 310 tokens · $0.0004".
+fn job_timing(job: &Value) -> String {
+    let turns: Vec<String> = job["turns"].as_array().cloned().unwrap_or_default().iter().enumerate()
+        .map(|(i, t)| format!("{}) {:.1} s {}", i + 1, get(t, "ms") / 1000.0, t["did"].as_str().unwrap_or(""))).collect();
+    let cost = job["usage"]["cost"].as_f64().map(|c| format!(" · ${c:.4}")).unwrap_or_default();
+    format!("{:.1} s, {} turn{}: {} · {} + {} tokens{cost}", get(job, "elapsed_ms") / 1000.0, turns.len(),
+            if turns.len() == 1 { "" } else { "s" }, turns.join(" "), num(get(&job["usage"], "prompt_tokens")),
+            num(get(&job["usage"], "completion_tokens")))
 }
 
 // MARK: Formatting

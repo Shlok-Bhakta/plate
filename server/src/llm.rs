@@ -5,6 +5,7 @@
 
 use serde_json::{json, Value};
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Replies past this are cut off (OpenRouter's whole model list is about 1 MB).
@@ -99,9 +100,13 @@ impl Provider {
     }
 
     /// A request with retries, all of it finished by `deadline`. Each try waits at most `per_try`.
-    fn send(&self, path: &str, body: Option<&Value>, per_try: Duration, deadline: Instant) -> Result<Value, String> {
+    /// A set `cancel` stops the retries.
+    fn send(&self, path: &str, body: Option<&Value>, per_try: Duration, deadline: Instant, cancel: Option<&AtomicBool>) -> Result<Value, String> {
         let mut tries = 0;
         loop {
+            if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+                return Err("cancelled".to_string());
+            }
             let left = deadline.saturating_duration_since(Instant::now());
             if left < Duration::from_secs(1) {
                 return Err("timed out waiting for the model".to_string());
@@ -134,28 +139,47 @@ impl Provider {
     }
 
     /// `POST {base_url}/chat/completions`.
-    pub fn chat(&self, body: &Value, per_try: Duration, deadline: Instant) -> Result<Value, String> {
-        self.send("/chat/completions", Some(body), per_try, deadline)
+    pub fn chat(&self, body: &Value, per_try: Duration, deadline: Instant, cancel: Option<&AtomicBool>) -> Result<Value, String> {
+        self.send("/chat/completions", Some(body), per_try, deadline, cancel)
     }
 
     /// `GET {base_url}/models`.
     pub fn models(&self) -> Result<Value, String> {
-        self.send("/models", None, Duration::from_secs(20), Instant::now() + Duration::from_secs(45))
+        self.send("/models", None, Duration::from_secs(20), Instant::now() + Duration::from_secs(45), None)
+    }
+
+    pub fn openai(&self) -> bool {
+        self.base_url.to_ascii_lowercase().contains("api.openai.com")
     }
 
     /// The request body every chat call shares: model, token limit, and OpenRouter's usage flag.
-    pub fn body(&self, messages: &[Value], tools: Option<&Value>, max_tokens: u64) -> Value {
+    /// `effort` (none, low, medium, high) goes out as OpenRouter's unified `reasoning.effort`
+    /// ("none" turns reasoning off) or OpenAI's `reasoning_effort`; other providers get nothing,
+    /// since strict servers reject unknown fields. With tools, those two also get
+    /// `parallel_tool_calls`, so a model can search several foods in one reply.
+    pub fn body(&self, messages: &[Value], tools: Option<&Value>, max_tokens: u64, effort: Option<&str>) -> Value {
         let mut body = json!({"model": self.model, "messages": messages});
+        let known = self.openrouter() || self.openai();
         if let Some(tools) = tools {
             body["tools"] = tools.clone();
             body["tool_choice"] = json!("auto");
+            if known {
+                body["parallel_tool_calls"] = json!(true);
+            }
         }
         // OpenAI's newer models only take max_completion_tokens; everyone else knows max_tokens.
-        let limit = if self.base_url.contains("api.openai.com") { "max_completion_tokens" } else { "max_tokens" };
+        let limit = if self.openai() { "max_completion_tokens" } else { "max_tokens" };
         body[limit] = json!(max_tokens);
         if self.openrouter() {
             // Asks OpenRouter for usage.cost in USD. Sent only there: strict servers reject unknown fields.
             body["usage"] = json!({"include": true});
+        }
+        if let Some(effort) = effort {
+            if self.openrouter() {
+                body["reasoning"] = json!({"effort": effort});
+            } else if self.openai() {
+                body["reasoning_effort"] = json!(effort);
+            }
         }
         body
     }
@@ -335,11 +359,27 @@ pub mod tests {
     #[test]
     fn bodies_fit_the_provider() {
         let open_router = Provider::new("https://openrouter.ai/api/v1", "k", "a/b");
-        let body = open_router.body(&[json!({"role": "user", "content": "hi"})], Some(&json!([])), 100);
+        let body = open_router.body(&[json!({"role": "user", "content": "hi"})], Some(&json!([])), 100, Some("low"));
         assert_eq!((body["usage"]["include"].as_bool(), body["max_tokens"].as_u64(), body["tool_choice"].as_str()), (Some(true), Some(100), Some("auto")));
-        let openai = Provider::new("https://api.openai.com/v1", "k", "gpt").body(&[], None, 100);
-        assert!(openai.get("usage").is_none() && openai.get("tools").is_none());
+        assert_eq!(body["reasoning"], json!({"effort": "low"}));
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert!(body.get("reasoning_effort").is_none());
+        let off = open_router.body(&[], None, 100, Some("none"));
+        assert_eq!(off["reasoning"], json!({"effort": "none"}));
+        assert!(off.get("parallel_tool_calls").is_none(), "only with tools");
+        let openai = Provider::new("https://api.openai.com/v1", "k", "gpt").body(&[], None, 100, Some("medium"));
+        assert!(openai.get("usage").is_none() && openai.get("tools").is_none() && openai.get("reasoning").is_none());
         assert_eq!(openai["max_completion_tokens"], 100);
+        assert_eq!(openai["reasoning_effort"], "medium");
+        let openai_tools = Provider::new("https://api.openai.com/v1", "k", "gpt").body(&[], Some(&json!([])), 100, None);
+        assert!(openai_tools.get("reasoning_effort").is_none());
+        assert_eq!(openai_tools["parallel_tool_calls"], true);
+        // Anyone else: only the standard fields.
+        let local = Provider::new("http://localhost:8080/v1", "", "llava").body(&[], Some(&json!([])), 100, Some("high"));
+        for key in ["reasoning", "reasoning_effort", "parallel_tool_calls", "usage", "max_completion_tokens"] {
+            assert!(local.get(key).is_none(), "{key}");
+        }
+        assert_eq!(local["max_tokens"], 100);
         assert_eq!(usage(&json!({"usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0012}})), (10, 5, Some(0.0012)));
         assert_eq!(usage(&json!({"usage": {"prompt_tokens": 10}})), (10, 0, None));
     }

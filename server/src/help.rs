@@ -49,7 +49,31 @@ Run `food <command> --help` before using a command for the first time; for a mea
 `food log --help` first. Setting up a server: `food init --help`.
 "#;
 
-pub const LOG: &str = r#"food log: add entries to the log.
+/// Steps 1 to 4 of the meal-photo workflow: what's on the plate and how much. `food log --help`
+/// and the AI logging agent's system prompt both use it.
+macro_rules! photo_estimate {
+    () => {
+        r#"  1. Name every item, including drinks, sauces, dressings, oil and butter. They're where
+     estimates go wrong.
+  2. Estimate grams honestly from the plate (about 26 cm), utensils, a hand, packaging and
+     typical portions. Don't round down to be kind. If something is ambiguous (fried or grilled,
+     whole or skim), pick the likelier one and say which.
+  3. Prefer --catalog, so micronutrients come from real data. A query matches the plainest food
+     that has all its words, so name foods plainly ("chicken breast roasted", "rice white
+     cooked", "olive oil") and add a word only when it matters ("fried", "with skin", "canned").
+     `food search "<q>" --no-off` shows the candidates and their fdc: ids.
+  4. Otherwise (restaurant dishes, anything the catalog lacks) log by name with the whole
+     profile you can reasonably judge: kcal, protein, carbs, fat, fiber, sugar, sat_fat, sodium
+     and more. Leave out what you can't judge: missing means unknown, which beats a made-up
+     zero. Give whole-plate totals and leave servings at 1.
+"#
+    };
+}
+
+/// Steps 1 to 4 of the meal-photo workflow, as in `food log --help`.
+pub const PHOTO_ESTIMATE: &str = photo_estimate!();
+
+pub const LOG: &str = concat!(r#"food log: add entries to the log.
 
 Usage
   food log --catalog <query|fdc:ID> --grams G [options]      USDA data, scaled by weight
@@ -80,20 +104,7 @@ Flags
   --json-out      print the full JSON reply (every entry and the whole day) instead of the summary.
 
 A meal photo (or "two eggs and toast")
-  1. Name every item, including drinks, sauces, dressings, oil and butter. They're where
-     estimates go wrong.
-  2. Estimate grams honestly from the plate (about 26 cm), utensils, a hand, packaging and
-     typical portions. Don't round down to be kind. If something is ambiguous (fried or grilled,
-     whole or skim), pick the likelier one and say which.
-  3. Prefer --catalog, so micronutrients come from real data. A query matches the plainest food
-     that has all its words, so name foods plainly ("chicken breast roasted", "rice white
-     cooked", "olive oil") and add a word only when it matters ("fried", "with skin", "canned").
-     `food search "<q>" --no-off` shows the candidates and their fdc: ids.
-  4. Otherwise (restaurant dishes, anything the catalog lacks) log by name with the whole
-     profile you can reasonably judge: kcal, protein, carbs, fat, fiber, sugar, sat_fat, sodium
-     and more. Leave out what you can't judge: missing means unknown, which beats a made-up
-     zero. Give whole-plate totals and leave servings at 1.
-  5. Log the meal in one batch call. It is all or nothing: if any item fails, nothing is logged
+"#, photo_estimate!(), r#"  5. Log the meal in one batch call. It is all or nothing: if any item fails, nothing is logged
      and the error names the item.
   6. CHECK every matched name in the output against the plate. If one is wrong (a sauce,
      "glutinous", "fast food", raw instead of cooked, a different food), fix it right away:
@@ -127,7 +138,7 @@ Examples
   food log "Chipotle chicken burrito bowl" --kcal 750 --protein 52 --carbs 70 --fat 26 \
     --fiber 12 --sodium 1900 --meal lunch --note "from photo"
   food log --food 2211c6cd --servings 1.5 --meal dinner --date yesterday
-"#;
+"#);
 
 pub const TODAY: &str = r#"food today: the day so far.
 
@@ -632,17 +643,23 @@ pub const AGENT: &str = r#"food agent: AI logging, a photo or a sentence to a dr
 
 Usage
   food agent config [--base-url U] [--model M] [--key-stdin] [--auto-log on|off] [--max-jobs N]
+                    [--effort none|low|medium|high] [--verify-matches on|off]
   food agent models [query]
   food agent test
   food agent prompt [--default | --set < FILE | --reset]
   food agent log [--photo PATH] [--text T | "text"] [--meal M] [--date D] [--yes]
+                 [--dry-run] [--model M] [--effort E]
   Every one takes --json.
 
 The service runs the agent for the app's photo logging: it sends the photo and the note to an
 OpenAI-compatible Chat Completions API (OpenRouter by default; OpenAI, a local server and other
 compatible ones work), lets the model use read-only tools that are the food commands, and keeps
-the last meal it proposed as a draft. Nothing is logged until the draft is confirmed, or at once
+the meal it proposed as a draft. Nothing is logged until the draft is confirmed, or at once
 with auto-log on. You (a CLI agent) don't need it: log with `food log` yourself.
+
+The fast path: in its first reply the model proposes the whole meal as plain catalog queries
+with grams, the server matches them, and the first proposal without an item error ends the job.
+It searches only when an item fails, all the doubtful items at once.
 
 config     with no flags, prints the settings and the spend today and this month.
   --base-url U       the API base, before /chat/completions; default https://openrouter.ai/api/v1
@@ -652,34 +669,44 @@ config     with no flags, prints the settings and the spend today and this month
                      not by config, the app's API or `food query`.
   --auto-log on|off  log a good draft straight away (default off; the app still offers undo)
   --max-jobs N       jobs per day, 1 to 1000 (default 60): a backstop against runaway spend
+  --effort E         how hard the model thinks: none, low (default), medium or high. Sent as
+                     OpenRouter's reasoning.effort or OpenAI's reasoning_effort; other providers
+                     get nothing extra. Lower is faster.
+  --verify-matches on|off
+                     show the model the matched foods and let it propose once more (default
+                     off: slower, rarely needed)
 models     the provider's models, matching the query. On OpenRouter only those that take images
            and call tools, with USD per 1M tokens in and out. Cached for an hour.
 test       one tiny request with the current settings: whether the key, model and credit work,
            and how long it took.
-prompt     prints the system prompt in use. --default prints the built-in one, which is
-           `food log --help`, `food help nutrients`, `food search --help` and
-           `food barcode --help` with a short preface; --set reads a custom one from stdin (at
-           most 32 KB); --reset goes back to the built-in one. Whatever it says, each job also
-           sends the date and time, the meal, what's left today, the note and any barcodes, and
-           the same tools.
-log        runs one job, prints the draft, and asks before logging it. --yes logs it without
-           asking; with no terminal and no --yes nothing is logged.
+prompt     prints the system prompt in use. --default prints the built-in one: a short preface,
+           steps 1 to 4 of the photo workflow in `food log --help` and `food help nutrients`.
+           --set reads a custom one from stdin (at most 32 KB); --reset goes back to the
+           built-in one. Whatever it says, each job also sends the date and time, the meal,
+           what's left today, the note and any barcodes (already looked up), and the same tools.
+log        runs one job, prints the draft and its timing, and asks before logging it. --yes
+           logs it without asking; with no terminal and no --yes nothing is logged.
   --photo PATH   a JPEG of at most 1.5 MB. It isn't resized: shrink it to about 1024 px first.
   --text T       what was eaten, or a note about the photo ("the rice was brown").
   --meal M, --date D  when it was eaten (default from the clock, and today).
+  --dry-run      never log the draft, even with auto-log on or --yes: for trying models.
+  --model M, --effort E
+                 this job only, without changing the saved settings.
 
 The model's tools (each the same as a command; none of them writes)
+  propose_meal     food log --json as a dry run; a good one is the draft
   search_foods     food search "q" [--no-off]
   lookup_barcode   food barcode <digits>, without saving the product
   suggest          food suggest [--meal M]
   get_today        food today [--date D]
   get_goals        food goals
-  propose_meal     food log --json as a dry run; the last good one is the draft
 
 Limits: 2 jobs at once, the daily cap, 6 model turns, 90 s a request, 3 minutes a job. 429s,
 5xx and dropped connections are retried twice. Errors say what to do: "API key is invalid",
 "out of credit", "unknown model", a content filter or the model declining. Entries it logs have
-source agent and the note (or "from photo") as their note.
+source agent and the note (or "from photo") as their note. A cancelled job (the app's cancel)
+stops at once, logs nothing and doesn't count toward the daily cap. The service log has one
+line per job: the outcome, the time, each model turn's time and tool calls, tokens and cost.
 
 Examples
   printf '%s\n' "$OPENROUTER_API_KEY" | food agent config --key-stdin --model openai/gpt-5-mini
@@ -687,6 +714,7 @@ Examples
   food agent test
   food agent log --photo dinner.jpg --text "half the rice"
   food agent log "two eggs and toast" --meal breakfast --yes
+  food agent log --photo dinner.jpg --dry-run --model google/gemini-3.5-flash --effort none
 "#;
 
 pub const SERVE: &str = r#"food serve: the service (admin).
